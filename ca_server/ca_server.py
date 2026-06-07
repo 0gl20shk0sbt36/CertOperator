@@ -272,21 +272,16 @@ echo "  client_key=$CERT_DIR/client.key"
 # ---------------------------------------------------------------------------
 
 
-def _read_totp_secret(cfg: dict) -> Optional[str]:
-    """Read TOTP secret from config or secret file."""
-    # Prefer config.yaml
-    secret = cfg.get("totp", {}).get("secret")
-    if secret:
-        return secret
-    # Fallback to secret file
+def _read_totp_secret(_cfg: Optional[dict] = None) -> Optional[str]:
+    """Read TOTP secret from data/totp_secret.txt only."""
     if TOTP_SECRET_FILE.is_file():
         return TOTP_SECRET_FILE.read_text().strip()
     return None
 
 
-def _write_totp_secret(secret: str, cfg: dict) -> None:
-    cfg.setdefault("totp", {})["secret"] = secret
-    save_config(cfg)
+def _write_totp_secret(secret: str, _cfg: Optional[dict] = None) -> None:
+    """Write TOTP secret to data/totp_secret.txt only."""
+    TOTP_SECRET_FILE.parent.mkdir(parents=True, exist_ok=True)
     TOTP_SECRET_FILE.write_text(secret)
     TOTP_SECRET_FILE.chmod(0o600)
 
@@ -299,13 +294,13 @@ def _cmd_totp(args) -> None:
 
     if args.regenerate:
         secret = pyotp.random_base32()
-        _write_totp_secret(secret, cfg)
+        _write_totp_secret(secret)
         print(f"🔄 已重新生成 TOTP Secret")
     else:
-        secret = _read_totp_secret(cfg)
+        secret = _read_totp_secret()
         if not secret:
             secret = pyotp.random_base32()
-            _write_totp_secret(secret, cfg)
+            _write_totp_secret(secret)
             print(f"🔐 已生成新的 TOTP Secret")
         else:
             print(f"🔐 当前 TOTP 配置")
@@ -373,7 +368,7 @@ def _cmd_serve(args) -> None:
         print("❌ HTTPS 证书不存在，请先运行: python3 ca_server.py init")
         sys.exit(1)
 
-    secret = _read_totp_secret(cfg)
+    secret = _read_totp_secret()
     if not secret:
         print("❌ TOTP Secret 未配置，请先运行: python3 ca_server.py totp")
         sys.exit(1)
