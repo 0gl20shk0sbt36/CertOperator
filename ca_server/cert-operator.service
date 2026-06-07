@@ -1,0 +1,21 @@
+[Unit]
+Description=CertOperator CA Server — TOTP + mTLS SSH certificate authority
+Documentation=https://github.com/your/cert-operator
+After=network.target
+
+[Service]
+Type=simple
+User=cert-operator
+Group=cert-operator
+WorkingDirectory=/opt/ca_server
+ExecStart=/usr/bin/python3 /opt/ca_server/ca_server.py serve
+Restart=on-failure
+RestartSec=5
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target
