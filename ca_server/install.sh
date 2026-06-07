@@ -2,6 +2,7 @@
 # =============================================================================
 # cert-operator 服务端一键部署脚本
 # 创建专用虚拟环境 + 最小权限用户运行 + 开机自启
+# 安全覆盖：保留已有 data/  dist/  .venv
 # =============================================================================
 set -euo pipefail
 
@@ -40,10 +41,21 @@ else
 fi
 
 # =============================================================================
-# 2. 解压文件（自解压 → tar.gz → cp -r，三选一）
+# 2. 解压文件，保留已有 data/ dist/ .venv
 # =============================================================================
+BACKUP_DATA=""
+if [[ -d "$INSTALL_DIR/data" ]]; then
+    BACKUP_DATA=$(mktemp -d)
+    cp -r "$INSTALL_DIR/data" "$BACKUP_DATA/"
+    info "已有 data/ 已备份"
+fi
+BACKUP_DIST=""
+if [[ -d "$INSTALL_DIR/dist" ]]; then
+    BACKUP_DIST=$(mktemp -d)
+    cp -r "$INSTALL_DIR/dist" "$BACKUP_DIST/"
+fi
+
 if grep -q "^#__CERT_OP_ARCHIVE__$" "$0" 2>/dev/null; then
-    # 模式 A：自解压脚本（自身内嵌了 base64 编码的 tar.gz）
     info "自解压模式..."
     mkdir -p "$INSTALL_DIR"
     ARCHIVE_LINE=$(grep -n "^#__CERT_OP_ARCHIVE__$" "$0" | head -1 | cut -d: -f1)
@@ -51,32 +63,43 @@ if grep -q "^#__CERT_OP_ARCHIVE__$" "$0" 2>/dev/null; then
         --strip-components=1 -C "$INSTALL_DIR"
     info "自解压完成"
 elif TARBALL=$(ls "$SCRIPT_DIR"/ca-server*.tar.gz 2>/dev/null | head -1) && [[ -n "$TARBALL" ]]; then
-    # 模式 B：同目录有 tar.gz 压缩包
     info "从压缩包解压: $(basename "$TARBALL") ..."
     mkdir -p "$INSTALL_DIR"
     tar -xzf "$TARBALL" --strip-components=1 -C "$INSTALL_DIR"
     info "解压完成"
 else
-    # 模式 C：开发模式，从源码目录直接复制
-    info "未找到压缩包，从源码目录复制..."
+    info "从源码目录复制..."
     mkdir -p "$INSTALL_DIR"
     cp -r "$SCRIPT_DIR"/* "$INSTALL_DIR/"
-    # 清理旧生成文件
-    rm -rf "$INSTALL_DIR"/data "$INSTALL_DIR"/dist \
-          "$INSTALL_DIR"/__pycache__ "$INSTALL_DIR"/.venv
+    rm -rf "$INSTALL_DIR"/__pycache__ "$INSTALL_DIR"/.venv
 fi
-# 设置所有权（后续 venv 和 init 都会由此用户执行）
+
+# 恢复 data/ 和 dist/
+if [[ -n "$BACKUP_DATA" ]]; then
+    rm -rf "$INSTALL_DIR/data"
+    mv "$BACKUP_DATA/data" "$INSTALL_DIR/data"
+    info "data/ 已保留"
+fi
+if [[ -n "$BACKUP_DIST" ]]; then
+    rm -rf "$INSTALL_DIR/dist"
+    mv "$BACKUP_DIST/dist" "$INSTALL_DIR/dist"
+fi
+
 chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR"
-info "文件已复制，所有权已设置"
+info "文件已就绪，所有权已设置"
 
 # =============================================================================
-# 3. 创建虚拟环境并安装依赖
+# 3. 虚拟环境 + 依赖（已存在则跳过创建，更新依赖）
 # =============================================================================
-info "创建 Python 虚拟环境..."
-su -s /bin/bash "$SERVICE_USER" -c "python3 -m venv '$VENV_DIR'"
-info "虚拟环境已创建: $VENV_DIR"
+if [[ -f "$VENV_DIR/bin/python" ]]; then
+    info "虚拟环境已存在，跳过创建"
+else
+    info "创建 Python 虚拟环境..."
+    su -s /bin/bash "$SERVICE_USER" -c "python3 -m venv '$VENV_DIR'"
+    info "虚拟环境已创建"
+fi
 
-info "安装依赖到虚拟环境..."
+info "更新依赖..."
 # 镜像源加速：pip 会自动读取 PIP_INDEX_URL 环境变量
 # 国内服务器建议先 export PIP_INDEX_URL=https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple
 su -s /bin/bash "$SERVICE_USER" -c "
@@ -85,17 +108,21 @@ su -s /bin/bash "$SERVICE_USER" -c "
     '$PYTHON' -m pip install -r '$INSTALL_DIR/requirements.txt' -q --default-timeout=60 --retries=3
     '$PYTHON' -m pip install 'requests>=2.31' -q --default-timeout=60 --retries=3
 "
-info "依赖安装完成"
+info "依赖更新完成"
 
 # =============================================================================
-# 4. 初始化 CA
+# 4. 初始化 CA（已有密钥则跳过）
 # =============================================================================
-info "初始化 CA（生成密钥对、HTTPS 证书、客户端证书、部署脚本）..."
-su -s /bin/bash "$SERVICE_USER" -c "cd '$INSTALL_DIR' && '$PYTHON' ca_server.py init"
-info "CA 初始化完成"
+if [[ -f "$INSTALL_DIR/data/ca_key" ]]; then
+    info "CA 密钥已存在，跳过初始化"
+else
+    info "初始化 CA（生成密钥对、HTTPS 证书、客户端证书、部署脚本）..."
+    su -s /bin/bash "$SERVICE_USER" -c "cd '$INSTALL_DIR' && '$PYTHON' ca_server.py init"
+    info "CA 初始化完成"
+fi
 
 # =============================================================================
-# 5. 安装 systemd 服务
+# 5. 安装 / 更新 systemd 服务
 # =============================================================================
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 
@@ -123,6 +150,10 @@ UNIT
 
 systemctl daemon-reload
 systemctl enable "$SERVICE_NAME"
+if systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
+    info "正在重启服务以应用更新..."
+    systemctl restart "$SERVICE_NAME"
+fi
 info "systemd 服务已安装并启用（$SERVICE_FILE）"
 
 # =============================================================================
@@ -133,29 +164,32 @@ echo "============================================================"
 echo -e "${GREEN}  CA 服务器部署完成！${NC}"
 echo "============================================================"
 echo ""
-echo "下一步（手动执行）："
-echo ""
 
-echo -e "  ${YELLOW}1. 配置 TOTP${NC}"
-echo "     sudo -u $SERVICE_USER $PYTHON $INSTALL_DIR/ca_server.py totp"
-echo "     （终端会显示二维码，手机扫码绑定后运行 --verify 验证）"
-echo ""
-
-echo -e "  ${YELLOW}2. 启动服务${NC}"
-echo "     sudo systemctl start $SERVICE_NAME"
-echo "     sudo systemctl status $SERVICE_NAME   # 检查状态"
-echo "     journalctl -u $SERVICE_NAME -f        # 查看日志"
-echo ""
-
-echo -e "  ${YELLOW}3. 查看 CA 公钥部署到目标服务器的指南${NC}"
-echo "     sudo -u $SERVICE_USER $PYTHON $INSTALL_DIR/ca_server.py pubkey"
-echo ""
-
-echo -e "  ${YELLOW}4. 客户端部署包${NC}"
-echo "     scp $INSTALL_DIR/dist/deploy.sh user@client:"
-echo "     客户端运行: bash deploy.sh"
-echo ""
-
-echo -e "  ${YELLOW}5. 首次配置完成后建议设置日志轮转${NC}"
-echo "     journalctl --vacuum-time=30d"
+if [[ ! -f "$INSTALL_DIR/data/totp_secret.txt" ]]; then
+    echo "下一步（手动执行）："
+    echo ""
+    echo -e "  ${YELLOW}1. 配置 TOTP${NC}"
+    echo "     sudo -u $SERVICE_USER $PYTHON $INSTALL_DIR/ca_server.py totp"
+    echo "     （终端会显示二维码，手机扫码绑定后运行 --verify 验证）"
+    echo ""
+    echo -e "  ${YELLOW}2. 启动服务${NC}"
+    echo "     sudo systemctl start $SERVICE_NAME"
+    echo ""
+    echo -e "  ${YELLOW}3. 查看 CA 公钥部署到目标服务器的指南${NC}"
+    echo "     sudo -u $SERVICE_USER $PYTHON $INSTALL_DIR/ca_server.py pubkey"
+    echo ""
+    echo -e "  ${YELLOW}4. 客户端部署包${NC}"
+    echo "     scp $INSTALL_DIR/dist/deploy.sh user@client:"
+    echo "     客户端运行: bash deploy.sh"
+    echo ""
+else
+    echo -e "${GREEN}  服务已在运行，覆盖安装完成。${NC}"
+    echo ""
+    echo -e "  ${YELLOW}管理命令：${NC}"
+    echo "     sudo systemctl status $SERVICE_NAME   # 查看状态"
+    echo "     sudo systemctl restart $SERVICE_NAME  # 重启服务"
+    echo "     journalctl -u $SERVICE_NAME -f        # 查看日志"
+    echo "     sudo -u $SERVICE_USER $PYTHON $INSTALL_DIR/ca_server.py pubkey"
+    echo "     sudo -u $SERVICE_USER $PYTHON $INSTALL_DIR/ca_server.py totp --verify"
+fi
 echo ""
