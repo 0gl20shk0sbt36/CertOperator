@@ -1,0 +1,14 @@
+ca:
+  allowed_users: root,yyx,ubuntu,testuser
+  key_type: ed25519
+  validity_hours: 1
+rate_limit:
+  max_attempts: 5
+  window_seconds: 300
+server:
+  host: 0.0.0.0
+  port: 8443
+totp:
+  account: admin
+  issuer: CertOperator
+  secret: 3GM44EOCPP2L22H2LXXTVGBG42ZNLK2N
