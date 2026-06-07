@@ -56,6 +56,8 @@ ssh root@server
 export PIP_INDEX_URL=https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple
 bash ca-server-install.sh
 # 自动完成：创建用户 → 解压 → venv → 安装依赖 → init → 开机自启
+#           → 自动配置本机 SSH 信任 CA 公钥（TrustedUserCAKeys）
+#           安装后本机即可用证书 SSH 登录
 
 # 3. 添加允许 SSH 登录的用户
 sudo -u cert-operator /opt/ca_server/.venv/bin/python \
