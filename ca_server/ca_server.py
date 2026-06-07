@@ -71,6 +71,32 @@ def ensure_data_dir() -> None:
 
 
 # ---------------------------------------------------------------------------
+# command hint — auto-detect dev vs production install
+# ---------------------------------------------------------------------------
+
+SERVICE_USER = "cert-operator"
+
+
+def _cmd_hint(subcommand: str) -> str:
+    """Return the correct shell command for *subcommand* based on runtime env.
+
+    Development (``python3 ca_server.py``) vs production install
+    (``sudo -u cert-operator /opt/ca_server/.venv/bin/python ...``)
+    is detected by checking whether ``sys.executable`` is inside a venv.
+    """
+    import os
+    exec_path = sys.executable or "python3"
+    script_path = os.path.abspath(__file__)
+
+    if ".venv" in exec_path:
+        # Installed via install.sh — hint includes sudo + full path
+        return f"sudo -u {SERVICE_USER} {exec_path} {script_path} {subcommand}"
+    else:
+        # Development — just the basename
+        return f"python3 {os.path.basename(script_path)} {subcommand}"
+
+
+# ---------------------------------------------------------------------------
 # serial counter
 # ---------------------------------------------------------------------------
 
@@ -181,8 +207,8 @@ def _cmd_init() -> None:
     print(f"  客户端运行: bash ~/deploy.sh")
     print()
     print("下一步：")
-    print("  ca_server.py totp          # 配置 TOTP")
-    print("  ca_server.py serve         # 启动服务（mTLS 双向验证）")
+    print(f"  {_cmd_hint('totp')}          # 配置 TOTP")
+    print(f"  {_cmd_hint('serve')}         # 启动服务（mTLS 双向验证）")
 
 
 # ---------------------------------------------------------------------------
@@ -347,7 +373,7 @@ def _cmd_totp(args) -> None:
         print(f"✅ 当前验证码: {totp.now()}")
         print("   请与手机 App 显示的验证码对比确认")
     else:
-        print("💡 运行 ca_server.py totp --verify 验证当前 TOTP 码")
+        print(f"💡 运行 {_cmd_hint('totp --verify')} 验证当前 TOTP 码")
 
 
 # ---------------------------------------------------------------------------
@@ -362,15 +388,15 @@ def _cmd_serve(args) -> None:
 
     # ---- Validate preconditions ----
     if not CA_KEY.is_file():
-        print("❌ CA 密钥不存在，请先运行: ca_server.py init")
+        print(f"❌ CA 密钥不存在，请先运行: {_cmd_hint('init')}")
         sys.exit(1)
     if not HTTPS_KEY.is_file() or not HTTPS_CERT.is_file():
-        print("❌ HTTPS 证书不存在，请先运行: ca_server.py init")
+        print(f"❌ HTTPS 证书不存在，请先运行: {_cmd_hint('init')}")
         sys.exit(1)
 
     secret = _read_totp_secret()
     if not secret:
-        print("❌ TOTP Secret 未配置，请先运行: ca_server.py totp")
+        print(f"❌ TOTP Secret 未配置，请先运行: {_cmd_hint('totp')}")
         sys.exit(1)
 
     # ---- Server config ----
@@ -382,11 +408,11 @@ def _cmd_serve(args) -> None:
     # Validate mTLS preconditions
     if not no_mtls:
         if not CLIENT_CERT.is_file():
-            print("❌ mTLS 客户端证书不存在，请重新运行: ca_server.py init")
+            print(f"❌ mTLS 客户端证书不存在，请重新运行: {_cmd_hint('init')}")
             print("   （或传递 --no-mtls 禁用双向验证）")
             sys.exit(1)
         if not CLIENT_KEY.is_file():
-            print("❌ mTLS 客户端密钥不存在，请重新运行: ca_server.py init")
+            print(f"❌ mTLS 客户端密钥不存在，请重新运行: {_cmd_hint('init')}")
             sys.exit(1)
 
     key_type = cfg.get("ca", {}).get("key_type", "ed25519")
@@ -584,7 +610,7 @@ def _issue_cert(key_type: str, allowed_users: str, validity_hours: int) -> dict:
 
 def _cmd_pubkey() -> None:
     if not CA_KEY_PUB.is_file():
-        print("❌ CA 公钥不存在，请先运行: ca_server.py init")
+        print(f"❌ CA 公钥不存在，请先运行: {_cmd_hint('init')}")
         sys.exit(1)
 
     ca_pub = CA_KEY_PUB.read_text().strip()
