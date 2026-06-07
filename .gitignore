@@ -8,6 +8,9 @@ __pycache__/
 ca_server/data/
 ca_server/dist/
 
+# Generated release packages
+release/
+
 # IDE
 .vscode/
 .idea/

@@ -40,13 +40,22 @@ else
 fi
 
 # =============================================================================
-# 2. 复制文件
+# 2. 解压文件（优先从同目录的 tar.gz，回退到 cp -r）
 # =============================================================================
-info "复制文件到 $INSTALL_DIR ..."
-mkdir -p "$INSTALL_DIR"
-cp -r "$SCRIPT_DIR"/* "$INSTALL_DIR/"
-# 清理旧生成文件
-rm -rf "$INSTALL_DIR"/data "$INSTALL_DIR"/dist
+TARBALL=$(ls "$SCRIPT_DIR"/ca-server*.tar.gz 2>/dev/null | head -1)
+if [[ -n "$TARBALL" ]]; then
+    info "从压缩包解压: $(basename "$TARBALL") ..."
+    mkdir -p "$INSTALL_DIR"
+    tar -xzf "$TARBALL" --strip-components=1 -C "$INSTALL_DIR"
+    info "解压完成"
+else
+    info "未找到压缩包，从源码目录复制..."
+    mkdir -p "$INSTALL_DIR"
+    cp -r "$SCRIPT_DIR"/* "$INSTALL_DIR/"
+    # 清理旧生成文件
+    rm -rf "$INSTALL_DIR"/data "$INSTALL_DIR"/dist \
+          "$INSTALL_DIR"/__pycache__ "$INSTALL_DIR"/.venv
+fi
 # 设置所有权（后续 venv 和 init 都会由此用户执行）
 chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR"
 info "文件已复制，所有权已设置"
