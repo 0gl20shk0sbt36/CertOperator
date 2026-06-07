@@ -157,7 +157,38 @@ fi
 info "systemd 服务已安装并启用（$SERVICE_FILE）"
 
 # =============================================================================
-# 6. 部署公钥到目标服务器的指南
+# 6. 将 CA 公钥配置到本机 SSH（TrustedUserCAKeys）
+# =============================================================================
+CA_PUB="$INSTALL_DIR/data/ca_key.pub"
+SSHD_CONFIG="/etc/ssh/sshd_config"
+TRUST_LINE="TrustedUserCAKeys $CA_PUB"
+
+if [[ -f "$CA_PUB" ]]; then
+    # 确保 CA 公钥对其他用户可读
+    chmod 644 "$CA_PUB"
+
+    if grep -q "^TrustedUserCAKeys" "$SSHD_CONFIG" 2>/dev/null; then
+        info "sshd_config 已配置 TrustedUserCAKeys，跳过"
+    else
+        info "配置本机 SSH 信任 CA 公钥..."
+        echo "" >> "$SSHD_CONFIG"
+        echo "# cert-operator CA 公钥" >> "$SSHD_CONFIG"
+        echo "$TRUST_LINE" >> "$SSHD_CONFIG"
+        if sshd -t 2>/dev/null; then
+            systemctl restart sshd 2>/dev/null || systemctl restart ssh 2>/dev/null || true
+            info "sshd 配置完成并已重启"
+        else
+            warn "sshd 配置语法检查失败，已回滚——请手动添加："
+            warn "  $TRUST_LINE"
+            # 回滚
+            sed -i '/^# cert-operator CA 公钥$/d' "$SSHD_CONFIG"
+            sed -i "\|^$TRUST_LINE\$|d" "$SSHD_CONFIG"
+        fi
+    fi
+fi
+
+# =============================================================================
+# 7. 部署公钥到目标服务器的指南
 # =============================================================================
 echo ""
 echo "============================================================"
@@ -182,7 +213,7 @@ if [[ ! -f "$INSTALL_DIR/data/totp_secret.txt" ]]; then
     echo "     scp $INSTALL_DIR/dist/deploy.sh user@client:"
     echo "     （客户端运行: bash deploy.sh）"
     echo ""
-    echo -e "  ${YELLOW}5. 查看 CA 公钥（目标服务器配置用）${NC}"
+    echo -e "  ${YELLOW}5. 查看 CA 公钥（如需部署到其他目标服务器）${NC}"
     echo "     sudo -u $SERVICE_USER $PYTHON $INSTALL_DIR/ca_server.py pubkey"
     echo ""
 else
