@@ -77,10 +77,13 @@ su -s /bin/bash "$SERVICE_USER" -c "python3 -m venv '$VENV_DIR'"
 info "虚拟环境已创建: $VENV_DIR"
 
 info "安装依赖到虚拟环境..."
+# 镜像源加速：pip 会自动读取 PIP_INDEX_URL 环境变量
+# 国内服务器建议先 export PIP_INDEX_URL=https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple
 su -s /bin/bash "$SERVICE_USER" -c "
-    '$PYTHON' -m pip install --upgrade pip setuptools wheel -q
-    '$PYTHON' -m pip install -r '$INSTALL_DIR/requirements.txt' -q
-    '$PYTHON' -m pip install 'requests>=2.31' -q
+    export PIP_INDEX_URL='${PIP_INDEX_URL:-}'
+    '$PYTHON' -m pip install --upgrade pip setuptools wheel -q --default-timeout=60 --retries=3
+    '$PYTHON' -m pip install -r '$INSTALL_DIR/requirements.txt' -q --default-timeout=60 --retries=3
+    '$PYTHON' -m pip install 'requests>=2.31' -q --default-timeout=60 --retries=3
 "
 info "依赖安装完成"
 

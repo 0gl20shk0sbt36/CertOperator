@@ -49,6 +49,8 @@ bash ca_server/package.sh
 # 2. 上传到服务器并安装
 scp release/ca-server-install.sh root@server:~
 ssh root@server
+# 国内服务器建议先设置镜像源加速
+export PIP_INDEX_URL=https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple
 bash ca-server-install.sh
 # 自动完成：创建用户 → 解压 → venv → 安装依赖 → init → 开机自启
 
