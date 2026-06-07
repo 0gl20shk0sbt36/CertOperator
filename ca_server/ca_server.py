@@ -408,16 +408,20 @@ def _cmd_serve(args) -> None:
     # Validate mTLS preconditions
     if not no_mtls:
         if not CLIENT_CERT.is_file():
-            print(f"❌ mTLS 客户端证书不存在，请重新运行: {_cmd_hint('init')}")
+            print("❌ mTLS 客户端证书不存在，请重新运行", _cmd_hint("init"))
             print("   （或传递 --no-mtls 禁用双向验证）")
             sys.exit(1)
         if not CLIENT_KEY.is_file():
-            print(f"❌ mTLS 客户端密钥不存在，请重新运行: {_cmd_hint('init')}")
+            print("❌ mTLS 客户端密钥不存在，请重新运行", _cmd_hint("init"))
             sys.exit(1)
 
     key_type = cfg.get("ca", {}).get("key_type", "ed25519")
     validity_hours = cfg.get("ca", {}).get("validity_hours", 1)
-    allowed_users = cfg.get("ca", {}).get("allowed_users", "root,yyx,ubuntu")
+    allowed_users = cfg.get("ca", {}).get("allowed_users", "")
+
+    if not allowed_users.strip():
+        print("❌ 未配置允许用户，请先运行", _cmd_hint("users add"))
+        sys.exit(1)
 
     max_attempts = cfg.get("rate_limit", {}).get("max_attempts", 5)
     window_seconds = cfg.get("rate_limit", {}).get("window_seconds", 300)
@@ -635,6 +639,164 @@ def _cmd_pubkey() -> None:
 
 
 # ---------------------------------------------------------------------------
+# users — manage allowed_users list
+# ---------------------------------------------------------------------------
+
+
+def _list_system_users() -> list[str]:
+    """Return human users from /etc/passwd (UID >= 1000, not nologin)."""
+    import pwd
+    users = []
+    for pw in pwd.getpwall():
+        if pw.pw_uid >= 1000 and pw.pw_uid != 65534:
+            shell = pw.pw_shell.rstrip("/")
+            if not shell.endswith("nologin") and shell != "/bin/false":
+                users.append(pw.pw_name)
+    return sorted(users)
+
+
+def _check_user_exists(username: str) -> bool:
+    """Check if *username* exists as a local system user."""
+    import pwd
+    try:
+        pwd.getpwnam(username)
+        return True
+    except KeyError:
+        return False
+
+
+def _cmd_users(args) -> None:
+    cfg = load_config()
+
+    allowed_raw = cfg.get("ca", {}).get("allowed_users", "")
+    allowed = set()
+    for name in allowed_raw.replace(",", " ").split():
+        name = name.strip()
+        if name:
+            allowed.add(name)
+
+    if args.action == "list":
+        print("🔑 当前允许用户：")
+        if allowed:
+            for u in sorted(allowed):
+                marker = "✅" if _check_user_exists(u) else "⚠️"
+                print(f"  {marker} {u}")
+        else:
+            print("  （空）")
+        print(f"\n总 {len(allowed)} 个")
+        return
+
+    if args.action in ("add", "set"):
+        targets: list[str] = []
+
+        if args.user is not None:
+            # 从参数传入（允许传空字符串来清空）
+            raw = args.user
+            if raw:
+                targets = [u.strip() for u in raw.replace(",", " ").split() if u.strip()]
+        else:
+            # 交互式选择
+            system_users = _list_system_users()
+            if not system_users:
+                print("❌ 未找到本地系统用户（UID ≥ 1000 且有登录 shell）")
+                return
+            print("可选的本地系统用户：")
+            for i, u in enumerate(system_users, 1):
+                status = "✅" if u in allowed else "  "
+                print(f"  {i:3d}. {status} {u}")
+            print("\n输入编号添加（多个用逗号分隔，如 1,3,5），按回车取消：")
+            try:
+                raw = input("> ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                return
+            if not raw:
+                return
+            for part in raw.replace("，", ",").split(","):
+                part = part.strip()
+                if part.isdigit():
+                    idx = int(part) - 1
+                    if 0 <= idx < len(system_users):
+                        targets.append(system_users[idx])
+                elif part:
+                    targets.append(part)
+
+        # 校验并添加
+        added = []
+        skipped = []
+        not_found = []
+        for u in targets:
+            if not _check_user_exists(u):
+                not_found.append(u)
+            elif u in allowed:
+                skipped.append(u)
+            else:
+                allowed.add(u)
+                added.append(u)
+
+        if args.action == "set":
+            # set 模式：覆盖全量（传空则是清空）
+            allowed = set(targets)
+            cfg["ca"]["allowed_users"] = ",".join(sorted(allowed))
+            save_config(cfg)
+            if allowed:
+                print(f"✅ 已设置为: {', '.join(sorted(allowed))}")
+            else:
+                print("✅ 已清空允许用户列表")
+            print(f"📋 当前允许用户: {cfg['ca']['allowed_users'] or '（空）'}")
+            return
+
+        if added:
+            cfg["ca"]["allowed_users"] = ",".join(sorted(allowed))
+            save_config(cfg)
+            print(f"✅ 已添加: {', '.join(added)}")
+        if skipped:
+            print(f"⏭️  已存在: {', '.join(skipped)}")
+        if not_found:
+            print(f"❌ 不存在: {', '.join(not_found)}")
+        return
+
+    if args.action == "remove":
+        if args.user:
+            targets = [u.strip() for u in args.user.replace(",", " ").split() if u.strip()]
+            removed = [u for u in targets if u in allowed]
+            for u in removed:
+                allowed.discard(u)
+            if removed:
+                cfg["ca"]["allowed_users"] = ",".join(sorted(allowed))
+                save_config(cfg)
+                print(f"✅ 已移除: {', '.join(removed)}")
+            else:
+                print("⏭️  这些用户不在允许列表中")
+        else:
+            if not allowed:
+                print("❌ 当前允许列表为空")
+                return
+            print("选择要移除的用户：")
+            items = sorted(allowed)
+            for i, u in enumerate(items, 1):
+                print(f"  {i:3d}. {u}")
+            print("\n输入编号（多个用逗号分隔）：")
+            try:
+                raw = input("> ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                return
+            if not raw:
+                return
+            for part in raw.replace("，", ",").split(","):
+                part = part.strip()
+                if part.isdigit():
+                    idx = int(part) - 1
+                    if 0 <= idx < len(items):
+                        allowed.discard(items[idx])
+            cfg["ca"]["allowed_users"] = ",".join(sorted(allowed))
+            save_config(cfg)
+            print(f"✅ 已更新，当前允许用户: {cfg['ca']['allowed_users'] or '（空）'}")
+        return
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -663,6 +825,14 @@ def main() -> None:
     # pubkey
     sub.add_parser("pubkey", help="显示 CA 公钥")
 
+    # users
+    p_users = sub.add_parser("users", help="管理允许的用户列表")
+    p_users.add_argument("action", choices=["list", "add", "remove", "set"],
+                         nargs="?", default="list",
+                         help="操作: list 列出 | add 添加 | remove 移除 | set 覆盖设置")
+    p_users.add_argument("user", nargs="?", default=None,
+                         help="用户名（可逗号分隔多个，省略时进入交互模式）")
+
     args = parser.parse_args()
 
     if args.command == "init":
@@ -673,6 +843,8 @@ def main() -> None:
         _cmd_serve(args)
     elif args.command == "pubkey":
         _cmd_pubkey()
+    elif args.command == "users":
+        _cmd_users(args)
     else:
         parser.print_help()
 

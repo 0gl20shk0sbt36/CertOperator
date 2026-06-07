@@ -118,6 +118,11 @@ ssh -i ~/.hermes/certs/prod-server user@target-server
 | `serve` | 启动 mTLS HTTPS 服务 |
 | `serve --no-mtls` | 启动服务（禁用 mTLS，仅单向 HTTPS） |
 | `pubkey` | 显示 CA 公钥 + 目标服务器部署命令 |
+| `users list` | 列出当前允许的 SSH 登录用户 |
+| `users add <user>` | 添加允许用户（逗号分隔多个，检查系统用户是否存在） |
+| `users add` | 交互式选择本地系统用户 |
+| `users remove <user>` | 移除允许用户 |
+| `users set <user1,user2>` | 覆盖设置允许用户列表（传空字符串清空） |
 
 ### 插件工具
 

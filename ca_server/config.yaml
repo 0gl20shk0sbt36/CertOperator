@@ -1,16 +1,13 @@
-server:
-  host: "0.0.0.0"
-  port: 8443
-
 ca:
+  allowed_users: codewhale,root
   key_type: ed25519
   validity_hours: 1
-  allowed_users: "root,yyx,ubuntu"
-
-totp:
-  issuer: "CertOperator"
-  account: "admin"
-
 rate_limit:
   max_attempts: 5
   window_seconds: 300
+server:
+  host: 0.0.0.0
+  port: 8443
+totp:
+  account: admin
+  issuer: CertOperator
