@@ -40,15 +40,24 @@ else
 fi
 
 # =============================================================================
-# 2. 解压文件（优先从同目录的 tar.gz，回退到 cp -r）
+# 2. 解压文件（自解压 → tar.gz → cp -r，三选一）
 # =============================================================================
-TARBALL=$(ls "$SCRIPT_DIR"/ca-server*.tar.gz 2>/dev/null | head -1)
-if [[ -n "$TARBALL" ]]; then
+if grep -q "^#__CERT_OP_ARCHIVE__$" "$0" 2>/dev/null; then
+    # 模式 A：自解压脚本（自身内嵌了 base64 编码的 tar.gz）
+    info "自解压模式..."
+    mkdir -p "$INSTALL_DIR"
+    ARCHIVE_LINE=$(grep -n "^#__CERT_OP_ARCHIVE__$" "$0" | head -1 | cut -d: -f1)
+    tail -n +$((ARCHIVE_LINE + 1)) "$0" | base64 -d | tar -xzf - \
+        --strip-components=1 -C "$INSTALL_DIR"
+    info "自解压完成"
+elif TARBALL=$(ls "$SCRIPT_DIR"/ca-server*.tar.gz 2>/dev/null | head -1) && [[ -n "$TARBALL" ]]; then
+    # 模式 B：同目录有 tar.gz 压缩包
     info "从压缩包解压: $(basename "$TARBALL") ..."
     mkdir -p "$INSTALL_DIR"
     tar -xzf "$TARBALL" --strip-components=1 -C "$INSTALL_DIR"
     info "解压完成"
 else
+    # 模式 C：开发模式，从源码目录直接复制
     info "未找到压缩包，从源码目录复制..."
     mkdir -p "$INSTALL_DIR"
     cp -r "$SCRIPT_DIR"/* "$INSTALL_DIR/"

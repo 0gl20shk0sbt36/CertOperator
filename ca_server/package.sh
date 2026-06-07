@@ -1,7 +1,7 @@
 #!/bin/bash
 # =============================================================================
 # cert-operator 服务端打包脚本
-# 将 ca_server/ 源码打包为 release/ca-server.tar.gz
+# 生成自解压安装脚本 release/ca-server-install.sh
 # =============================================================================
 set -euo pipefail
 
@@ -9,17 +9,19 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CA_SERVER_DIR="$(cd "$SCRIPT_DIR/.." && pwd)/ca_server"
 RELEASE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)/release"
 VERSION="${1:-1.0.0}"
-PACKAGE_NAME="ca-server-${VERSION}.tar.gz"
+OUTPUT="$RELEASE_DIR/ca-server-install.sh"
 
 echo "📦 打包 cert-operator 服务端 v${VERSION}"
 echo "   源目录: $CA_SERVER_DIR"
-echo "   输出:   $RELEASE_DIR/$PACKAGE_NAME"
+echo "   输出:   $OUTPUT"
 
 mkdir -p "$RELEASE_DIR"
 
-# 打包，排除生成的文件
-# 使用 --transform 重命名顶层目录，解压后为 ca-server/
-tar -czf "$RELEASE_DIR/$PACKAGE_NAME" \
+# 1. 打包源码（排除生成文件）
+TMP_TAR=$(mktemp)
+trap "rm -f '$TMP_TAR'" EXIT
+
+tar -czf "$TMP_TAR" \
     --transform="s|^ca_server|ca-server|" \
     --exclude="ca_server/data" \
     --exclude="ca_server/dist" \
@@ -28,11 +30,20 @@ tar -czf "$RELEASE_DIR/$PACKAGE_NAME" \
     -C "$(dirname "$CA_SERVER_DIR")" \
     ca_server/
 
-echo ""
-echo "✅ 打包完成: $RELEASE_DIR/$PACKAGE_NAME"
-echo "   大小: $(du -h "$RELEASE_DIR/$PACKAGE_NAME" | cut -f1)"
+TAR_SIZE=$(du -h "$TMP_TAR" | cut -f1)
 
-# 同时复制 install.sh 到 release/
-cp "$CA_SERVER_DIR/install.sh" "$RELEASE_DIR/install.sh"
-chmod +x "$RELEASE_DIR/install.sh"
-echo "   已同步 install.sh"
+# 2. 读取 install.sh 模板，追加 base64 编码的压缩包
+{
+    cat "$CA_SERVER_DIR/install.sh"
+    echo ""
+    echo "#__CERT_OP_ARCHIVE__"
+    base64 < "$TMP_TAR"
+} > "$OUTPUT"
+
+chmod +x "$OUTPUT"
+OUTPUT_SIZE=$(du -h "$OUTPUT" | cut -f1)
+
+echo ""
+echo "✅ 打包完成"
+echo "   压缩包大小: $TAR_SIZE"
+echo "   自解压脚本: $OUTPUT ($OUTPUT_SIZE)"

@@ -39,7 +39,36 @@ workspace/
 
 ## 快速开始
 
-### 服务端
+### 服务端（生产部署）
+
+```bash
+# 1. 打包自解压安装脚本
+bash ca_server/package.sh
+# 生成: release/ca-server-install.sh （一个文件，包含全部）
+
+# 2. 上传到服务器并安装
+scp release/ca-server-install.sh root@server:~
+ssh root@server
+bash ca-server-install.sh
+# 自动完成：创建用户 → 解压 → venv → 安装依赖 → init → 开机自启
+
+# 3. 配置 TOTP
+sudo -u cert-operator /opt/ca_server/.venv/bin/python \
+    /opt/ca_server/ca_server.py totp
+
+# 4. 启动服务
+sudo systemctl start cert-operator
+
+# 5. 查看 CA 公钥部署到目标服务器的指南
+sudo -u cert-operator /opt/ca_server/.venv/bin/python \
+    /opt/ca_server/ca_server.py pubkey
+
+# 6. 客户端部署包
+scp /opt/ca_server/dist/deploy.sh user@client:~
+# 客户端运行: bash deploy.sh
+```
+
+### 服务端（开发/测试）
 
 ```bash
 cd ca_server
