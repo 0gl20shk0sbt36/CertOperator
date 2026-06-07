@@ -65,22 +65,12 @@ python3 ca_server.py pubkey
 
 ```bash
 # 获取证书
-python3 -c "
-import sys; sys.path.insert(0, 'cert-operator')
-from client import get_sub_cert
-
-result = get_sub_cert(
-    server='https://ca-server:8443',
-    totp_code='123456',
-    cert_name='prod-server',
-    ca_cert_path='~/.hermes/certs/ca-https-cert.pem',
-    client_cert='~/.hermes/certs/client.cert',
-    client_key='~/.hermes/certs/client.key',
-)
-print(f'证书已保存: {result[\"cert_path\"]}')
-"
+python3 -m cert-operator get-cert https://ca-server:8443 123456 prod-server
 
 # 登录服务器
+python3 -m cert-operator ssh prod-server.example.com root ~/.hermes/certs/prod-server
+
+# 或者直接使用 SSH（证书自动发现）
 ssh -i ~/.hermes/certs/prod-server user@target-server
 ```
 
