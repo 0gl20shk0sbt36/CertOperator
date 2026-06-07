@@ -205,10 +205,6 @@ def _cmd_init() -> None:
     print("📦 客户端部署包（包含三个文件，一次传输）：")
     print(f"  scp {DIST_DIR/'deploy.sh'} user@client:~")
     print(f"  客户端运行: bash ~/deploy.sh")
-    print()
-    print("下一步：")
-    print(f"  {_cmd_hint('totp')}          # 配置 TOTP")
-    print(f"  {_cmd_hint('serve')}         # 启动服务（mTLS 双向验证）")
 
 
 # ---------------------------------------------------------------------------
