@@ -3,14 +3,14 @@
 
 Subcommands::
 
-    python3 ca_server.py init                    # ① 一键初始化
-    python3 ca_server.py totp                    # ② 配置 TOTP
-    python3 ca_server.py totp --verify           # ③ 验证 TOTP 码
-    python3 ca_server.py totp --regenerate       # ④ 重新生成 Secret
-    python3 ca_server.py serve                   # ⑤ 启动 HTTPS 服务
-    python3 ca_server.py serve --debug           # ⑥ 调试模式
-    python3 ca_server.py serve --host 0.0.0.0 --port 8443  # ⑦ 指定地址
-    python3 ca_server.py pubkey                  # ⑧ 显示 CA 公钥
+    ca_server.py init                    # ① 一键初始化
+    ca_server.py totp                    # ② 配置 TOTP
+    ca_server.py totp --verify           # ③ 验证 TOTP 码
+    ca_server.py totp --regenerate       # ④ 重新生成 Secret
+    ca_server.py serve                   # ⑤ 启动 HTTPS 服务
+    ca_server.py serve --debug           # ⑥ 调试模式
+    ca_server.py serve --host 0.0.0.0 --port 8443  # ⑦ 指定地址
+    ca_server.py pubkey                  # ⑧ 显示 CA 公钥
 
 All certificate issuance goes through TOTP verification — there is no
 offline / bypass mode.
@@ -181,8 +181,8 @@ def _cmd_init() -> None:
     print(f"  客户端运行: bash ~/deploy.sh")
     print()
     print("下一步：")
-    print("  python3 ca_server.py totp          # 配置 TOTP")
-    print("  python3 ca_server.py serve         # 启动服务（mTLS 双向验证）")
+    print("  ca_server.py totp          # 配置 TOTP")
+    print("  ca_server.py serve         # 启动服务（mTLS 双向验证）")
 
 
 # ---------------------------------------------------------------------------
@@ -347,7 +347,7 @@ def _cmd_totp(args) -> None:
         print(f"✅ 当前验证码: {totp.now()}")
         print("   请与手机 App 显示的验证码对比确认")
     else:
-        print("💡 运行 python3 ca_server.py totp --verify 验证当前 TOTP 码")
+        print("💡 运行 ca_server.py totp --verify 验证当前 TOTP 码")
 
 
 # ---------------------------------------------------------------------------
@@ -362,15 +362,15 @@ def _cmd_serve(args) -> None:
 
     # ---- Validate preconditions ----
     if not CA_KEY.is_file():
-        print("❌ CA 密钥不存在，请先运行: python3 ca_server.py init")
+        print("❌ CA 密钥不存在，请先运行: ca_server.py init")
         sys.exit(1)
     if not HTTPS_KEY.is_file() or not HTTPS_CERT.is_file():
-        print("❌ HTTPS 证书不存在，请先运行: python3 ca_server.py init")
+        print("❌ HTTPS 证书不存在，请先运行: ca_server.py init")
         sys.exit(1)
 
     secret = _read_totp_secret()
     if not secret:
-        print("❌ TOTP Secret 未配置，请先运行: python3 ca_server.py totp")
+        print("❌ TOTP Secret 未配置，请先运行: ca_server.py totp")
         sys.exit(1)
 
     # ---- Server config ----
@@ -382,11 +382,11 @@ def _cmd_serve(args) -> None:
     # Validate mTLS preconditions
     if not no_mtls:
         if not CLIENT_CERT.is_file():
-            print("❌ mTLS 客户端证书不存在，请重新运行: python3 ca_server.py init")
+            print("❌ mTLS 客户端证书不存在，请重新运行: ca_server.py init")
             print("   （或传递 --no-mtls 禁用双向验证）")
             sys.exit(1)
         if not CLIENT_KEY.is_file():
-            print("❌ mTLS 客户端密钥不存在，请重新运行: python3 ca_server.py init")
+            print("❌ mTLS 客户端密钥不存在，请重新运行: ca_server.py init")
             sys.exit(1)
 
     key_type = cfg.get("ca", {}).get("key_type", "ed25519")
@@ -584,7 +584,7 @@ def _issue_cert(key_type: str, allowed_users: str, validity_hours: int) -> dict:
 
 def _cmd_pubkey() -> None:
     if not CA_KEY_PUB.is_file():
-        print("❌ CA 公钥不存在，请先运行: python3 ca_server.py init")
+        print("❌ CA 公钥不存在，请先运行: ca_server.py init")
         sys.exit(1)
 
     ca_pub = CA_KEY_PUB.read_text().strip()
