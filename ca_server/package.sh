@@ -36,6 +36,7 @@ TAR_SIZE=$(du -h "$TMP_TAR" | cut -f1)
 {
     cat "$CA_SERVER_DIR/install.sh"
     echo ""
+    echo "exit 0"
     echo "#__CERT_OP_ARCHIVE__"
     base64 < "$TMP_TAR"
 } > "$OUTPUT"
