@@ -104,9 +104,49 @@ python3 ca_server.py serve
 python3 ca_server.py pubkey
 ```
 
-### 客户端（你日常操作的电脑）
+### 客户端安装与使用（你日常操作的电脑）
 
 cert-operator 客户端是你日常使用的电脑（笔记本、开发机）。通过它向 CA 服务器申请短期 SSH 证书，然后登录目标服务器。
+
+#### 安装方式
+
+根据你的环境选择一种：
+
+**方式一：Hermes 插件（推荐）**
+
+将 `cert-operator/` 目录复制到 Hermes 用户插件目录即可自动加载：
+
+```bash
+cp -r cert-operator ~/.hermes/plugins/cert-operator
+# 或从服务器上的安装包直接部署
+scp root@ca-server:/opt/ca_server/dist/deploy.sh ~
+bash ~/deploy.sh
+```
+
+Hermes 启动后自动注册 `get_sub_cert` 和 `ssh_with_cert` 两个工具。
+验证：`ls ~/.hermes/plugins/cert-operator/plugin.yaml && grep -r "cert-operator" ~/.hermes/logs/agent.log`
+
+**方式二：Python 包**
+
+```bash
+pip install -e /workspace/cert-operator
+# 或复制到项目内：cp -r cert-operator /your-project/
+```
+
+导入使用：
+
+```python
+from cert_operator.client import get_sub_cert, ssh_with_cert
+```
+
+**方式三：独立 CLI（无需安装）**
+
+```bash
+# 直接运行，只需 requests 库
+python3 -m cert-operator get-cert https://ca-server:8443 123456 prod-server
+```
+
+#### 基本用法
 
 ```bash
 # 获取证书
@@ -118,55 +158,6 @@ python3 -m cert-operator ssh prod-server.example.com root ~/.hermes/certs/prod-s
 # 或者直接使用 SSH（证书自动发现）
 ssh -i ~/.hermes/certs/prod-server user@target-server
 ```
-
-## 插件安装
-
-### 方式一：Hermes 插件（推荐）
-
-将 `cert-operator/` 目录复制到 Hermes 用户插件目录即可自动加载：
-
-```bash
-cp -r cert-operator ~/.hermes/plugins/cert-operator
-# 或从服务器上的安装包直接部署
-scp root@ca-server:/opt/ca_server/dist/deploy.sh ~
-bash ~/deploy.sh
-```
-
-Hermes 启动后会自动检测 `plugin.yaml`，注册 `get_sub_cert` 和 `ssh_with_cert` 两个工具。
-
-验证是否加载成功：
-
-```bash
-ls ~/.hermes/plugins/cert-operator/plugin.yaml   # 确认存在
-grep -r "cert-operator" ~/.hermes/logs/agent.log  # 查看加载日志
-```
-
-### 方式二：作为 Python 包安装
-
-```bash
-# 直接安装到系统
-pip install -e /workspace/cert-operator
-
-# 或复制到项目内作为本地包
-cp -r cert-operator /your-project/
-```
-
-导入使用：
-
-```python
-from cert_operator.client import get_sub_cert, ssh_with_cert
-
-get_sub_cert("https://ca-server:8443", "123456", "prod-server")
-```
-
-### 方式三：独立 CLI（无需安装）
-
-```bash
-# 直接运行
-python3 -m cert-operator get-cert https://ca-server:8443 123456 prod-server
-```
-
-前提是 `requests` 库已安装：`pip install requests`
 
 ## 子命令参考
 
