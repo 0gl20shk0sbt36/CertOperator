@@ -267,6 +267,12 @@ info "依赖更新完成"
 # =============================================================================
 if [[ -f "$INSTALL_DIR/data/ca_key" ]]; then
     info "CA 密钥已存在，跳过初始化"
+    # 如果交互式修改了 SAN，自动更新 HTTPS 证书
+    if [[ -n "$san_result" ]] && [[ "$san_result" != "$OLD_SAN" ]]; then
+        info "SAN 已变更，自动更新 HTTPS 证书..."
+        su -s /bin/bash "$SERVICE_USER" -c "cd '$INSTALL_DIR' && '$PYTHON' ca_server.py renew-cert"
+        info "HTTPS 证书已更新"
+    fi
 else
     info "初始化 CA（生成密钥对、HTTPS 证书、客户端证书、部署脚本）..."
     su -s /bin/bash "$SERVICE_USER" -c "cd '$INSTALL_DIR' && '$PYTHON' ca_server.py init"
