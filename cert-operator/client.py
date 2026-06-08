@@ -233,7 +233,7 @@ def ssh_with_cert(
         "ssh",
         "-i", str(priv),
         "-p", str(port),
-        "-o", "StrictHostKeyChecking=yes",
+        "-o", "StrictHostKeyChecking=accept-new",
         "-o", f"UserKnownHostsFile={known_hosts}",
         "-o", f"ConnectTimeout={timeout}",
     ]

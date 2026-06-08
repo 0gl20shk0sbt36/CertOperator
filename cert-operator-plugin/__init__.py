@@ -202,7 +202,7 @@ def _run_ssh(
         "ssh",
         "-i", str(key_file),
         "-p", str(port),
-        "-o", "StrictHostKeyChecking=yes",
+        "-o", "StrictHostKeyChecking=accept-new",
         "-o", f"UserKnownHostsFile={DEFAULT_CERTS_DIR}/known_hosts",
         "-o", "ConnectTimeout=15",
     ]
