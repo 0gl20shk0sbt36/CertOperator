@@ -117,6 +117,55 @@ python3 -m cert-operator ssh prod-server.example.com root ~/.hermes/certs/prod-s
 ssh -i ~/.hermes/certs/prod-server user@target-server
 ```
 
+## 插件安装
+
+### 方式一：Hermes 插件（推荐）
+
+将 `cert-operator/` 目录复制到 Hermes 用户插件目录即可自动加载：
+
+```bash
+cp -r cert-operator ~/.hermes/plugins/cert-operator
+# 或从服务器上的安装包直接部署
+scp root@ca-server:/opt/ca_server/dist/deploy.sh ~
+bash ~/deploy.sh
+```
+
+Hermes 启动后会自动检测 `plugin.yaml`，注册 `get_sub_cert` 和 `ssh_with_cert` 两个工具。
+
+验证是否加载成功：
+
+```bash
+ls ~/.hermes/plugins/cert-operator/plugin.yaml   # 确认存在
+grep -r "cert-operator" ~/.hermes/logs/agent.log  # 查看加载日志
+```
+
+### 方式二：作为 Python 包安装
+
+```bash
+# 直接安装到系统
+pip install -e /workspace/cert-operator
+
+# 或复制到项目内作为本地包
+cp -r cert-operator /your-project/
+```
+
+导入使用：
+
+```python
+from cert_operator.client import get_sub_cert, ssh_with_cert
+
+get_sub_cert("https://ca-server:8443", "123456", "prod-server")
+```
+
+### 方式三：独立 CLI（无需安装）
+
+```bash
+# 直接运行
+python3 -m cert-operator get-cert https://ca-server:8443 123456 prod-server
+```
+
+前提是 `requests` 库已安装：`pip install requests`
+
 ## 子命令参考
 
 ### ca_server.py

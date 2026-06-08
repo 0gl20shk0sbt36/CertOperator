@@ -1,0 +1,8 @@
+[project]
+name = "cert-operator"
+version = "1.0.0"
+description = "TOTP + mTLS gated SSH certificate client"
+requires-python = ">=3.11"
+dependencies = [
+    "requests>=2.31",
+]
