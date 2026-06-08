@@ -491,6 +491,10 @@ def _cmd_serve(args) -> None:
             _max_attempts = max_attempts
             _window_seconds = window_seconds
 
+        # 有组配置但未传 group 时提示
+        if group_name == "" and groups:
+            return jsonify({"success": False, "error": "未指定 group，请传入组名"}), 400
+
         if not _users.strip():
             hint = f"groups users {group_name} add" if group_name else "users add"
             return jsonify({"success": False, "error": f"未配置允许用户，请运行 {hint}"}), 400
