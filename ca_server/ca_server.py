@@ -454,6 +454,15 @@ def _cmd_serve(args) -> None:
 
     @app.route("/api/get-cert", methods=["POST"])
     def api_get_cert():
+        # 实时读取允许用户，跟随 users set 即时生效
+        _cfg = load_config()
+        _users = _cfg.get("ca", {}).get("allowed_users", "")
+        if not _users.strip():
+            return jsonify({
+                "success": False,
+                "error": "未配置允许用户，请先运行 users add",
+            }), 400
+
         # Rate limit
         client_addr = request.remote_addr or "unknown"
         if not check_rate_limit(client_addr):
@@ -488,7 +497,7 @@ def _cmd_serve(args) -> None:
 
         # ---- Issue SSH certificate ----
         try:
-            result = _issue_cert(key_type, allowed_users, validity_hours)
+            result = _issue_cert(key_type, _users, validity_hours)
         except Exception as exc:
             return jsonify({
                 "success": False,
@@ -513,10 +522,13 @@ def _cmd_serve(args) -> None:
 
     @app.route("/api/info", methods=["GET"])
     def api_info():
+        # 实时读取配置，避免 users set 后未重启导致的过期数据
+        _cfg = load_config()
+        _users = _cfg.get("ca", {}).get("allowed_users", "")
         return jsonify({
             "ca_key_type": key_type,
             "validity_hours": validity_hours,
-            "allowed_users": allowed_users,
+            "allowed_users": _users,
             "ca_public_key": CA_KEY_PUB.read_text().strip() if CA_KEY_PUB.is_file() else None,
         })
 
