@@ -215,6 +215,9 @@ def _cmd_init() -> None:
     print(f"  scp {DIST_DIR/'deploy.sh'} user@client:~")
     print(f"  客户端运行: bash ~/deploy.sh")
 
+    # ---- 7. Create default group ----
+    _ensure_default_group(cfg)
+
 
 # ---------------------------------------------------------------------------
 # client certificate + deploy script
@@ -472,28 +475,13 @@ def _cmd_serve(args) -> None:
         group_name = str(body.get("group") or "").strip()
         req_user = str(body.get("user") or "").strip()
 
-        # 分辨率组配置
-        groups = _cfg.get("groups", {}) or {}
-        if group_name and group_name in groups:
-            gcfg = groups[group_name]
-            _users = gcfg.get("allowed_users", "")
-            _secret = gcfg.get("totp_secret", "")
-            _secret_file = DATA_DIR / f"totp_secret_{group_name}.txt"
-            _validity_hours = gcfg.get("validity_hours", validity_hours)
-            g_rl = gcfg.get("rate_limit", {})
-            _max_attempts = g_rl.get("max_attempts", max_attempts)
-            _window_seconds = g_rl.get("window_seconds", window_seconds)
-        else:
-            _users = _cfg.get("ca", {}).get("allowed_users", "")
-            _secret = _read_totp_secret()
-            _secret_file = TOTP_SECRET_FILE
-            _validity_hours = validity_hours
-            _max_attempts = max_attempts
-            _window_seconds = window_seconds
-
-        # 有组配置但未传 group 时提示
-        if group_name == "" and groups:
-            return jsonify({"success": False, "error": "未指定 group，请传入组名"}), 400
+        # 分辨率组配置（空 group_name → 自动用 default）
+        gcfg = _get_group_config(_cfg, group_name)
+        if gcfg is None:
+            return jsonify({"success": False, "error": f"组不存在: {group_name or 'default'}"}), 400
+        _users = gcfg.get("allowed_users", "")
+        _secret = gcfg.get("totp_secret", "")
+        _validity_hours = gcfg.get("validity_hours", validity_hours)
 
         if not _users.strip():
             hint = f"groups users {group_name} add" if group_name else "users add"
@@ -548,10 +536,9 @@ def _cmd_serve(args) -> None:
 
     @app.route("/api/info", methods=["GET"])
     def api_info():
-        # 实时读取配置，避免 users set 后未重启导致的过期数据
         _cfg = load_config()
-        _users = _cfg.get("ca", {}).get("allowed_users", "")
         _groups = _cfg.get("groups", {}) or {}
+        _dg = _get_group_config(_cfg, "default")
         _groups_info = {}
         for gname, gcfg in _groups.items():
             _groups_info[gname] = {
@@ -562,16 +549,23 @@ def _cmd_serve(args) -> None:
         return jsonify({
             "ca_key_type": key_type,
             "validity_hours": validity_hours,
-            "allowed_users": _users,
+            "allowed_users": (_dg or {}).get("allowed_users", ""),
             "groups": _groups_info,
             "ca_public_key": CA_KEY_PUB.read_text().strip() if CA_KEY_PUB.is_file() else None,
         })
+
+    # ---- Startup migration ----
+    _ensure_default_group(_cfg)
 
     # ---- Start ----
     print(f"🚀 CA 服务器启动中...")
     print(f"   地址: https://{host}:{port}")
     print(f"   证书有效期: {validity_hours}h")
-    print(f"   允许用户: {allowed_users}")
+    _dg = _get_group_config(_cfg, "default")
+    if _dg and _dg.get("allowed_users"):
+        print(f"   允许用户: {_dg['allowed_users']}（default 组）")
+    else:
+        print(f"   允许用户: （空，请运行 users add）")
     print(f"   限速: {max_attempts}次/{window_seconds}秒")
     if no_mtls:
         print(f"   mTLS: 已禁用（仅单向验证）")
@@ -648,6 +642,47 @@ def _issue_cert(key_type: str, allowed_users: str, validity_hours: int) -> dict:
                 p.unlink(missing_ok=True)
             except OSError:
                 pass
+
+
+# ---------------------------------------------------------------------------
+# default group — migrate old global config or create on init
+# ---------------------------------------------------------------------------
+
+
+def _ensure_default_group(cfg: dict) -> None:
+    """Create or update the ``default`` group from global config.
+
+    On fresh install: create an empty default group.
+    On upgrade (globals with data): migrate ``ca.allowed_users`` and
+    ``totp_secret`` into the group, then clear the globals so future
+    reads go through the group.
+    """
+    groups = cfg.setdefault("groups", {})
+    if "default" not in groups:
+        groups["default"] = {}
+
+    dg = groups["default"]
+    # Migrate allowed_users
+    global_users = cfg.get("ca", {}).get("allowed_users", "")
+    if global_users and not dg.get("allowed_users"):
+        dg["allowed_users"] = global_users
+        cfg["groups"]["default"]["allowed_users"] = ""
+    # Migrate validity_hours
+    global_vh = cfg.get("ca", {}).get("validity_hours", 1)
+    if "validity_hours" not in dg:
+        dg["validity_hours"] = global_vh
+    # Migrate totp_secret from file
+    totp_secret = _read_totp_secret()
+    if totp_secret and not dg.get("totp_secret"):
+        dg["totp_secret"] = totp_secret
+    save_config(cfg)
+
+
+def _get_group_config(cfg: dict, group_name: str) -> Optional[dict]:
+    """Resolve group config.  Empty *group_name* uses ``default``."""
+    groups = cfg.get("groups", {}) or {}
+    name = group_name or "default"
+    return groups.get(name)
 
 
 # ---------------------------------------------------------------------------
@@ -764,8 +799,9 @@ def _check_user_exists(username: str) -> bool:
 
 def _cmd_users(args) -> None:
     cfg = load_config()
-
-    allowed_raw = cfg.get("ca", {}).get("allowed_users", "")
+    _ensure_default_group(cfg)
+    dg = cfg["groups"]["default"]
+    allowed_raw = dg.get("allowed_users", "")
     allowed = set()
     for name in allowed_raw.replace(",", " ").split():
         name = name.strip()
@@ -834,7 +870,7 @@ def _cmd_users(args) -> None:
         if args.action == "set":
             # set 模式：覆盖全量（传空则是清空）
             allowed = set(targets)
-            cfg["ca"]["allowed_users"] = ",".join(sorted(allowed))
+            cfg["groups"]["default"]["allowed_users"] = ",".join(sorted(allowed))
             save_config(cfg)
             if allowed:
                 print(f"✅ 已设置为: {', '.join(sorted(allowed))}")
@@ -844,7 +880,7 @@ def _cmd_users(args) -> None:
             return
 
         if added:
-            cfg["ca"]["allowed_users"] = ",".join(sorted(allowed))
+            cfg["groups"]["default"]["allowed_users"] = ",".join(sorted(allowed))
             save_config(cfg)
             print(f"✅ 已添加: {', '.join(added)}")
         if skipped:
@@ -860,7 +896,7 @@ def _cmd_users(args) -> None:
             for u in removed:
                 allowed.discard(u)
             if removed:
-                cfg["ca"]["allowed_users"] = ",".join(sorted(allowed))
+                cfg["groups"]["default"]["allowed_users"] = ",".join(sorted(allowed))
                 save_config(cfg)
                 print(f"✅ 已移除: {', '.join(removed)}")
             else:
@@ -887,7 +923,7 @@ def _cmd_users(args) -> None:
                     idx = int(part) - 1
                     if 0 <= idx < len(items):
                         allowed.discard(items[idx])
-            cfg["ca"]["allowed_users"] = ",".join(sorted(allowed))
+            cfg["groups"]["default"]["allowed_users"] = ",".join(sorted(allowed))
             save_config(cfg)
             print(f"✅ 已更新，当前允许用户: {cfg['ca']['allowed_users'] or '（空）'}")
         return

@@ -6,7 +6,6 @@ server:
 ca:
   key_type: ed25519
   validity_hours: 1
-  allowed_users: ""
 
 totp:
   issuer: "CertOperator"
@@ -16,6 +15,8 @@ rate_limit:
   max_attempts: 5
   window_seconds: 300
 
-# 组配置（可选）。不配置时使用全局 totp 和 ca 设置。
-# 每个组可覆盖 totp_secret、validity_hours、allowed_users、rate_limit。
-groups: {}
+groups:
+  default:
+    allowed_users: ""
+    validity_hours: 1
+    totp_secret: ""
