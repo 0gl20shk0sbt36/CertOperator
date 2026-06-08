@@ -114,16 +114,20 @@ cert-operator 客户端是你日常使用的电脑（笔记本、开发机）。
 
 **方式一：Hermes 插件（推荐）**
 
-将 `cert-operator/` 目录复制到 Hermes 用户插件目录即可自动加载：
+将 `cert-operator/` 目录复制到 Hermes 用户插件目录：
 
 ```bash
 cp -r cert-operator ~/.hermes/plugins/cert-operator
-# 或从服务器上的安装包直接部署
+```
+
+然后从服务器部署客户端证书（一次性）：
+
+```bash
 scp root@ca-server:/opt/ca_server/dist/deploy.sh ~
 bash ~/deploy.sh
 ```
 
-Hermes 启动后自动注册 `get_sub_cert` 和 `ssh_with_cert` 两个工具。
+Hermes 重启后自动加载 `get_sub_cert` 和 `ssh_with_cert` 两个工具。
 验证：`ls ~/.hermes/plugins/cert-operator/plugin.yaml && grep -r "cert-operator" ~/.hermes/logs/agent.log`
 
 **方式二：Python 包**
