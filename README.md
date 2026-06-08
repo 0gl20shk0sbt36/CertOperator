@@ -67,10 +67,14 @@ sudo -u cert-operator /opt/ca_server/.venv/bin/python \
 sudo -u cert-operator /opt/ca_server/.venv/bin/python \
     /opt/ca_server/ca_server.py totp
 
-# 5. 启动服务
+# 5. 开放防火墙（默认端口 8443）
+sudo ufw allow 8443/tcp   # 如果使用 ufw
+# 或: firewall-cmd --add-port=8443/tcp --permanent && firewall-cmd --reload
+
+# 6. 启动服务
 sudo systemctl start cert-operator
 
-# 6. 查看 CA 公钥部署到目标服务器的指南
+# 7. 查看 CA 公钥部署到目标服务器的指南
 sudo -u cert-operator /opt/ca_server/.venv/bin/python \
     /opt/ca_server/ca_server.py pubkey
 
@@ -97,10 +101,13 @@ python3 ca_server.py users add root
 # 3. 配置 TOTP
 python3 ca_server.py totp
 
-# 4. 启动服务（mTLS 双向验证）
+# 4. 开放防火墙
+sudo ufw allow 8443/tcp   # 默认端口 8443
+
+# 5. 启动服务（mTLS 双向验证）
 python3 ca_server.py serve
 
-# 5. 查看 CA 公钥部署指南
+# 6. 查看 CA 公钥部署指南
 python3 ca_server.py pubkey
 ```
 
@@ -175,6 +182,7 @@ ssh -i ~/.hermes/certs/prod-server user@target-server
 | `totp --regenerate` | 重新生成 Secret |
 | `serve` | 启动 mTLS HTTPS 服务 |
 | `serve --no-mtls` | 禁用 mTLS，仅单向 HTTPS |
+| `serve --port 8443` | 指定端口（默认 8443） |
 | `pubkey` | 显示 CA 公钥 + 目标服务器部署命令 |
 | `users list` | 列出当前允许的 SSH 登录用户 |
 | `users add <user>` | 添加允许用户（逗号分隔多个，检查系统用户是否存在） |
