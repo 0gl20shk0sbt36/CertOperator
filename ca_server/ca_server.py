@@ -470,6 +470,7 @@ def _cmd_serve(args) -> None:
 
         totp_code = str(body["totp"]).strip()
         group_name = str(body.get("group") or "").strip()
+        req_user = str(body.get("user") or "").strip()
 
         # 分辨率组配置
         groups = _cfg.get("groups", {}) or {}
@@ -493,6 +494,14 @@ def _cmd_serve(args) -> None:
         if not _users.strip():
             hint = f"groups users {group_name} add" if group_name else "users add"
             return jsonify({"success": False, "error": f"未配置允许用户，请运行 {hint}"}), 400
+
+        # 用户精确匹配——指定则只签给该用户
+        if req_user:
+            user_list = [u.strip() for u in _users.replace(",", " ").split() if u.strip()]
+            if req_user not in user_list:
+                return jsonify({"success": False, "error": f"用户 {req_user} 不在允许列表中"}), 403
+            _users = req_user
+
         if not _secret:
             hint = f"groups totp {group_name} set" if group_name else "totp"
             return jsonify({"success": False, "error": f"未配置 TOTP，请运行 {hint}"}), 400
