@@ -100,7 +100,95 @@ chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR"
 info "文件已就绪，所有权已设置"
 
 # =============================================================================
-# 3. 虚拟环境 + 依赖（已存在则跳过创建，更新依赖）
+# 3. 交互式配置（覆盖安装时询问保留策略，首次安装提示填写）
+# =============================================================================
+
+_is_interactive() {
+    [[ -z "${NONINTERACTIVE:-}" ]] && [[ -t 0 ]]
+}
+
+CONFIG_YAML="$INSTALL_DIR/config.yaml"
+
+if _is_interactive; then
+    # 3a. 覆盖安装时确认是否保留现有配置
+    if [[ -f "$BACKUP_CONFIG" ]]; then
+        echo ""
+        echo -e "${YELLOW}检测到已有配置（覆盖安装）${NC}"
+        echo "  1) 保留现有配置（SAN、允许用户均不修改）"
+        echo "  2) 重新配置"
+        read -r -p "请选择 [1/2] (默认 1): " cfg_choice
+        if [[ "${cfg_choice:-1}" == "2" ]]; then
+            BACKUP_CONFIG=""  # 丢弃备份，用新配置
+            info "将使用新的配置"
+        else
+            info "保留现有配置"
+        fi
+    fi
+
+    # 3b. 配置 server.san
+    CURRENT_SAN=""
+    if [[ -n "${BACKUP_CONFIG:-}" ]] && [[ -f "$BACKUP_CONFIG" ]]; then
+        CURRENT_SAN=$(grep "^  san:" "$BACKUP_CONFIG" 2>/dev/null | sed 's/^  san: *"*//;s/"$//')
+    fi
+    echo ""
+    echo -e "${YELLOW}服务器地址配置（用于 HTTPS 证书 SAN）${NC}"
+    if [[ -n "$CURRENT_SAN" ]]; then
+        echo "  当前: $CURRENT_SAN"
+    fi
+    echo "  输入服务器公网 IP 或域名（多个用逗号分隔，如 IP:1.2.3.4,DNS:example.com）"
+    read -r -p "  SAN (直接回车跳过): " san_input
+    if [[ -n "$san_input" ]]; then
+        # 写入 config.yaml
+        if grep -q "^  san:" "$CONFIG_YAML" 2>/dev/null; then
+            sed -i "s/^  san:.*/  san: \"$san_input\"/" "$CONFIG_YAML"
+        else
+            sed -i '/^server:/a\  san: "'"$san_input"'"' "$CONFIG_YAML"
+        fi
+        info "SAN 已设置: $san_input"
+    fi
+
+    # 3c. 配置允许用户
+    echo ""
+    echo -e "${YELLOW}添加允许 SSH 登录的用户${NC}"
+    # 读取系统用户
+    SYSTEM_USERS=$(awk -F: '$3>=1000 && $3!=65534 {print $1}' /etc/passwd 2>/dev/null | sort)
+    if [[ -z "$SYSTEM_USERS" ]]; then
+        SYSTEM_USERS="root"
+    fi
+    # 列出用户
+    IFS=$'\n' read -r -d '' -a user_arr <<< "$SYSTEM_USERS" 2>/dev/null || true
+    echo "  可选的本地系统用户："
+    for i in "${!user_arr[@]}"; do
+        echo "    $((i+1)). ${user_arr[$i]}"
+    done
+    echo "  输入编号选择（多个用逗号分隔，如 1,3），或直接输入用户名"
+    read -r -p "  用户 (直接回车跳过): " user_input
+    if [[ -n "$user_input" ]]; then
+        SELECTED_USERS=()
+        # 解析编号或用户名
+        IFS=',' read -ra parts <<< "$user_input"
+        for part in "${parts[@]}"; do
+            part=$(echo "$part" | tr -d ' ')
+            if [[ "$part" =~ ^[0-9]+$ ]] && (( part >= 1 )) && (( part <= ${#user_arr[@]} )); then
+                SELECTED_USERS+=("${user_arr[$((part-1))]}")
+            elif [[ -n "$part" ]]; then
+                SELECTED_USERS+=("$part")
+            fi
+        done
+        if [[ ${#SELECTED_USERS[@]} -gt 0 ]]; then
+            USERS_STR=$(IFS=,; echo "${SELECTED_USERS[*]}")
+            if grep -q "^  allowed_users:" "$CONFIG_YAML" 2>/dev/null; then
+                sed -i "s/^  allowed_users:.*/  allowed_users: \"$USERS_STR\"/" "$CONFIG_YAML"
+            else
+                sed -i '/^ca:/a\  allowed_users: "'"$USERS_STR"'"' "$CONFIG_YAML"
+            fi
+            info "允许用户已设置: $USERS_STR"
+        fi
+    fi
+fi
+
+# =============================================================================
+# 4. 虚拟环境 + 依赖（已存在则跳过创建，更新依赖）
 # =============================================================================
 if [[ -f "$VENV_DIR/bin/python" ]]; then
     info "虚拟环境已存在，跳过创建"
