@@ -125,51 +125,79 @@ if _is_interactive; then
         fi
     fi
 
-    # 3b. 配置 server.san
-    CURRENT_SAN=""
-    if [[ -n "${BACKUP_CONFIG:-}" ]] && [[ -f "$BACKUP_CONFIG" ]]; then
-        CURRENT_SAN=$(grep "^  san:" "$BACKUP_CONFIG" 2>/dev/null | sed 's/^  san: *"*//;s/"$//')
-    fi
+    # 3b. 配置 server.san — 自动检测 IP + 选择/手动输入
     echo ""
     echo -e "${YELLOW}服务器地址配置（用于 HTTPS 证书 SAN）${NC}"
-    if [[ -n "$CURRENT_SAN" ]]; then
-        echo "  当前: $CURRENT_SAN"
-    fi
-    echo "  输入服务器公网 IP 或域名（多个用逗号分隔，如 IP:1.2.3.4,DNS:example.com）"
-    read -r -p "  SAN (直接回车跳过): " san_input
-    if [[ -n "$san_input" ]]; then
-        # 写入 config.yaml
-        if grep -q "^  san:" "$CONFIG_YAML" 2>/dev/null; then
-            sed -i "s/^  san:.*/  san: \"$san_input\"/" "$CONFIG_YAML"
-        else
-            sed -i '/^server:/a\  san: "'"$san_input"'"' "$CONFIG_YAML"
+
+    # 自动检测本机 IP
+    DETECTED_IPS=()
+    while IFS= read -r ip; do
+        ip=$(echo "$ip" | tr -d ' ')
+        if [[ -n "$ip" ]] && [[ "$ip" != "127.0.0.1" ]] && [[ "$ip" != "::1" ]]; then
+            DETECTED_IPS+=("$ip")
         fi
-        info "SAN 已设置: $san_input"
+    done < <(hostname -I 2>/dev/null; echo)
+
+    echo "  检测到本机 IP："
+    for i in "${!DETECTED_IPS[@]}"; do
+        echo "    $((i+1)). IP:${DETECTED_IPS[$i]}"
+    done
+    echo "    $(( ${#DETECTED_IPS[@]} + 1 )). 自定义输入"
+    read -r -p "  选择编号或直接输入（多个用逗号分隔，回车跳过）: " san_choice
+    san_result=""
+    if [[ -n "$san_choice" ]]; then
+        IFS=',' read -ra san_parts <<< "$san_choice"
+        for part in "${san_parts[@]}"; do
+            part=$(echo "$part" | tr -d ' ')
+            if [[ "$part" =~ ^[0-9]+$ ]] && (( part >= 1 )) && (( part <= ${#DETECTED_IPS[@]} )); then
+                san_result+="IP:${DETECTED_IPS[$((part-1))]},"
+            elif [[ "${san_parts[0]}" =~ ^[0-9]+$ ]] && (( 10#${san_parts[0]} == ${#DETECTED_IPS[@]} + 1 )); then
+                # 选项 N：自定义输入
+                read -r -p "  输入自定义 SAN（如 IP:1.2.3.4,DNS:example.com）: " custom_san
+                san_result="$custom_san"
+                break
+            elif [[ -n "$part" ]]; then
+                san_result+="$part,"
+            fi
+        done
+        san_result="${san_result%,}"
+        if [[ -n "$san_result" ]]; then
+            if grep -q "^  san:" "$CONFIG_YAML" 2>/dev/null; then
+                sed -i "s/^  san:.*/  san: \"$san_result\"/" "$CONFIG_YAML"
+            else
+                sed -i '/^server:/a\  san: "'"$san_result"'"' "$CONFIG_YAML"
+            fi
+            info "SAN 已设置: $san_result"
+        fi
     fi
 
-    # 3c. 配置允许用户
+    # 3c. 配置允许用户 — 列表选择 + 自定义输入
     echo ""
     echo -e "${YELLOW}添加允许 SSH 登录的用户${NC}"
-    # 读取系统用户
     SYSTEM_USERS=$(awk -F: '$3>=1000 && $3!=65534 {print $1}' /etc/passwd 2>/dev/null | sort)
     if [[ -z "$SYSTEM_USERS" ]]; then
         SYSTEM_USERS="root"
     fi
-    # 列出用户
     IFS=$'\n' read -r -d '' -a user_arr <<< "$SYSTEM_USERS" 2>/dev/null || true
     echo "  可选的本地系统用户："
+    echo "    0. 手动输入"
     for i in "${!user_arr[@]}"; do
         echo "    $((i+1)). ${user_arr[$i]}"
     done
-    echo "  输入编号选择（多个用逗号分隔，如 1,3），或直接输入用户名"
-    read -r -p "  用户 (直接回车跳过): " user_input
+    read -r -p "  选择编号或直接输入用户名（多个用逗号分隔，回车跳过）: " user_input
     if [[ -n "$user_input" ]]; then
         SELECTED_USERS=()
-        # 解析编号或用户名
         IFS=',' read -ra parts <<< "$user_input"
         for part in "${parts[@]}"; do
             part=$(echo "$part" | tr -d ' ')
-            if [[ "$part" =~ ^[0-9]+$ ]] && (( part >= 1 )) && (( part <= ${#user_arr[@]} )); then
+            if [[ "$part" == "0" ]]; then
+                read -r -p "  输入用户名（多个用逗号分隔）: " manual_users
+                IFS=',' read -ra manual_parts <<< "$manual_users"
+                for mp in "${manual_parts[@]}"; do
+                    mp=$(echo "$mp" | tr -d ' ')
+                    [[ -n "$mp" ]] && SELECTED_USERS+=("$mp")
+                done
+            elif [[ "$part" =~ ^[0-9]+$ ]] && (( part >= 1 )) && (( part <= ${#user_arr[@]} )); then
                 SELECTED_USERS+=("${user_arr[$((part-1))]}")
             elif [[ -n "$part" ]]; then
                 SELECTED_USERS+=("$part")
