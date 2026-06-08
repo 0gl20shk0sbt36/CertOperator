@@ -29,6 +29,13 @@ class CertificateExpiredError(CertOperatorError):
     """The SSH certificate has expired."""
 
 
+def _build_payload(totp_code: str, group_name: Optional[str] = None) -> dict:
+    payload = {"totp": totp_code}
+    if group_name:
+        payload["group"] = group_name
+    return payload
+
+
 # ---------------------------------------------------------------------------
 # get_sub_cert — fetch SSH certificate from CA server via HTTPS
 # ---------------------------------------------------------------------------
@@ -41,6 +48,7 @@ def get_sub_cert(
     ca_cert_path: Optional[str] = None,
     client_cert: Optional[str] = None,
     client_key: Optional[str] = None,
+    group_name: Optional[str] = None,
     *,
     timeout: int = 30,
 ) -> dict:
@@ -103,7 +111,7 @@ def get_sub_cert(
     try:
         resp = requests.post(
             url,
-            json={"totp": totp_code},
+            json=_build_payload(totp_code, group_name),
             verify=str(ca_path),
             cert=cert_tuple,
             timeout=timeout,

@@ -102,6 +102,7 @@ def _request_cert(
     ca_cert_path: Optional[str] = None,
     client_cert: Optional[str] = None,
     client_key: Optional[str] = None,
+    group_name: Optional[str] = None,
 ) -> dict[str, Any]:
     """通过 HTTPS 请求 CA 服务器获取 SSH 子证书。
 
@@ -122,6 +123,8 @@ def _request_cert(
     url = f"{server.rstrip('/')}/api/get-cert"
 
     payload = {"totp": totp_code}
+    if group_name:
+        payload["group"] = group_name
     headers = {
         "Content-Type": "application/json",
         "User-Agent": "hermes-cert-operator/1.0",
@@ -280,6 +283,10 @@ SCHEMA_GET_SUB_CERT = {
                 "type": "string",
                 "description": "mTLS 客户端密钥路径，如 ~/.hermes/certs/client.key",
             },
+            "group_name": {
+                "type": "string",
+                "description": "组名（如设置则使用该组的 TOTP 和配置）",
+            },
         },
         "required": ["server", "totp_code", "cert_name"],
     },
@@ -293,10 +300,11 @@ def _handle_get_sub_cert(
     ca_cert_path: Optional[str] = None,
     client_cert: Optional[str] = None,
     client_key: Optional[str] = None,
+    group_name: Optional[str] = None,
 ) -> str:
     """Handler: 获取 SSH 子证书。"""
     try:
-        data = _request_cert(server, totp_code, ca_cert_path, client_cert, client_key)
+        data = _request_cert(server, totp_code, ca_cert_path, client_cert, client_key, group_name)
 
         # 从服务器响应中提取 SSH 私钥和证书
         # 服务端返回格式:

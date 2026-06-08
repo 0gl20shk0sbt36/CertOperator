@@ -193,51 +193,12 @@ if _is_interactive; then
         info "SAN 已设置: $san_result"
     fi
 
-    # 3c. 配置允许用户 — 两步：选编号或自定义
+    # 3c. 用户/组配置提示（改用 cert-operator 命令管理）
     echo ""
-    echo -e "${YELLOW}添加允许 SSH 登录的用户${NC}"
-    SYSTEM_USERS=$(awk -F: '$3>=1000 && $3!=65534 {print $1}' /etc/passwd 2>/dev/null | sort)
-    if [[ -z "$SYSTEM_USERS" ]]; then
-        SYSTEM_USERS="root"
-    fi
-    IFS=$'\n' read -r -d '' -a user_arr <<< "$SYSTEM_USERS" 2>/dev/null || true
-    echo "  可选的本地系统用户："
-    for i in "${!user_arr[@]}"; do
-        echo "    $((i+1)). ${user_arr[$i]}"
-    done
-    echo "  回车跳过则${OLD_USERS:+保留原有: $OLD_USERS}${OLD_USERS:-保持为空}"
-    echo ""
-    echo "  1) 从以上用户中选择（输入编号，逗号分隔多选）"
-    echo "  2) 自定义输入"
-    read -r -p "  请选择 [1/2] (回车跳过): " user_mode
-    USERS_STR=""
-    if [[ "$user_mode" == "2" ]]; then
-        read -r -p "  输入用户名（多个用逗号分隔）: " manual_users
-        USERS_STR="$manual_users"
-    elif [[ "$user_mode" == "1" ]]; then
-        read -r -p "  输入编号（逗号分隔多选，如 1,3）: " idx_input
-        if [[ -n "$idx_input" ]]; then
-            SELECTED_USERS=()
-            IFS=',' read -ra idx_parts <<< "$idx_input"
-            for idx in "${idx_parts[@]}"; do
-                idx=$(echo "$idx" | tr -d ' ')
-                if [[ "$idx" =~ ^[0-9]+$ ]] && (( idx >= 1 )) && (( idx <= ${#user_arr[@]} )); then
-                    SELECTED_USERS+=("${user_arr[$((idx-1))]}")
-                fi
-            done
-            USERS_STR=$(IFS=,; echo "${SELECTED_USERS[*]}")
-        fi
-    elif [[ -z "$user_mode" ]] && [[ -n "$OLD_USERS" ]]; then
-        USERS_STR="$OLD_USERS"
-    fi
-    if [[ -n "$USERS_STR" ]]; then
-        if grep -q "^  allowed_users:" "$CONFIG_YAML" 2>/dev/null; then
-            sed -i "s/^  allowed_users:.*/  allowed_users: \"$USERS_STR\"/" "$CONFIG_YAML"
-        else
-            sed -i '/^ca:/a\  allowed_users: "'"$USERS_STR"'"' "$CONFIG_YAML"
-        fi
-        info "允许用户已设置: $USERS_STR"
-    fi
+    echo -e "${GREEN}用户和组配置请使用 cert-operator 命令管理：${NC}"
+    echo "  cert-operator users add root    # 添加全局允许用户"
+    echo "  cert-operator groups create admin && cert-operator groups users admin add root"
+    echo "  cert-operator groups totp admin set   # 为 admin 组配置 TOTP"
 fi
 
 # =============================================================================
@@ -315,7 +276,17 @@ fi
 info "systemd 服务已安装并启用（$SERVICE_FILE）"
 
 # =============================================================================
-# 6. 将 CA 公钥配置到本机 SSH（TrustedUserCAKeys）
+# 6. 安装 cert-operator 快捷命令
+# =============================================================================
+cat > "/usr/local/bin/cert-operator" << 'SHORTCUT'
+#!/bin/bash
+sudo -u cert-operator /opt/ca_server/.venv/bin/python /opt/ca_server/ca_server.py "$@"
+SHORTCUT
+chmod +x /usr/local/bin/cert-operator
+info "快捷命令已安装: cert-operator"
+
+# =============================================================================
+# 7. 将 CA 公钥配置到本机 SSH（TrustedUserCAKeys）
 # =============================================================================
 CA_PUB="$INSTALL_DIR/data/ca_key.pub"
 SSHD_CONFIG="/etc/ssh/sshd_config"
