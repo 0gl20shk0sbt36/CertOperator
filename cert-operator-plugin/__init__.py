@@ -288,7 +288,7 @@ SCHEMA_GET_SUB_CERT = {
             },
             "group_name": {
                 "type": "string",
-                "description": "组名（如设置则使用该组的 TOTP 和配置）",
+                "description": "组名（不传则使用 default 组，需要先配置 default 组的 TOTP 和允许用户）",
             },
             "user_name": {
                 "type": "string",

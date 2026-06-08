@@ -323,21 +323,25 @@ def _write_totp_secret(secret: str, _cfg: Optional[dict] = None) -> None:
 def _cmd_totp(args) -> None:
     ensure_data_dir()
     cfg = load_config()
+    _ensure_default_group(cfg)
+    dg = cfg["groups"]["default"]
     issuer = cfg.get("totp", {}).get("issuer", "CertOperator")
     account = cfg.get("totp", {}).get("account", "admin")
 
     if args.regenerate:
         secret = pyotp.random_base32()
-        _write_totp_secret(secret)
-        print(f"🔄 已重新生成 TOTP Secret")
+        dg["totp_secret"] = secret
+        save_config(cfg)
+        print(f"🔄 已重新生成 TOTP Secret（default 组）")
     else:
-        secret = _read_totp_secret()
+        secret = dg.get("totp_secret", "")
         if not secret:
             secret = pyotp.random_base32()
-            _write_totp_secret(secret)
-            print(f"🔐 已生成新的 TOTP Secret")
+            dg["totp_secret"] = secret
+            save_config(cfg)
+            print(f"🔐 已生成新的 TOTP Secret（default 组）")
         else:
-            print(f"🔐 当前 TOTP 配置")
+            print(f"🔐 当前 TOTP 配置（default 组）")
 
     # ---- Display ----
     print()
@@ -671,10 +675,13 @@ def _ensure_default_group(cfg: dict) -> None:
     global_vh = cfg.get("ca", {}).get("validity_hours", 1)
     if "validity_hours" not in dg:
         dg["validity_hours"] = global_vh
-    # Migrate totp_secret from file
+    # Migrate totp_secret from file, then purge file
     totp_secret = _read_totp_secret()
     if totp_secret and not dg.get("totp_secret"):
         dg["totp_secret"] = totp_secret
+    if dg.get("totp_secret"):
+        if TOTP_SECRET_FILE.is_file():
+            TOTP_SECRET_FILE.unlink(missing_ok=True)
     save_config(cfg)
 
 
