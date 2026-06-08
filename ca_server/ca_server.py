@@ -673,6 +673,9 @@ def _cmd_renew_cert() -> None:
     print(f"📋 证书 SAN（客户端必须匹配其中之一）:")
     for s in san_list:
         print(f"   {s}")
+    print()
+    # 重新生成 deploy.sh（内嵌 HTTPS 证书内容）
+    _generate_deploy_script()
 
 
 # ---------------------------------------------------------------------------
