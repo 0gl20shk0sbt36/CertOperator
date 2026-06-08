@@ -160,8 +160,9 @@ if _is_interactive; then
         echo "    $((i+1)). IP:${DETECTED_IPS[$i]}"
     done
     echo "    $(( ${#DETECTED_IPS[@]} + 1 )). 自定义输入"
+    CUSTOM_IDX=$(( ${#DETECTED_IPS[@]} + 1 ))
     echo "  回车跳过则${OLD_SAN:+保留原有: $OLD_SAN}${OLD_SAN:-保持为空}"
-    read -r -p "  选择编号或直接输入（多个用逗号分隔，回车跳过）: " san_choice
+    read -r -p "  输入编号（多个用逗号分隔，如 1,2；选 $CUSTOM_IDX 进入自定义）: " san_choice
     san_result=""
     if [[ -n "$san_choice" ]]; then
         IFS=',' read -ra san_parts <<< "$san_choice"
@@ -169,12 +170,10 @@ if _is_interactive; then
             part=$(echo "$part" | tr -d ' ')
             if [[ "$part" =~ ^[0-9]+$ ]] && (( part >= 1 )) && (( part <= ${#DETECTED_IPS[@]} )); then
                 san_result+="IP:${DETECTED_IPS[$((part-1))]},"
-            elif [[ "${san_parts[0]}" =~ ^[0-9]+$ ]] && (( 10#${san_parts[0]} == ${#DETECTED_IPS[@]} + 1 )); then
-                read -r -p "  输入自定义 SAN（如 IP:1.2.3.4,DNS:example.com）: " custom_san
-                san_result="$custom_san"
+            elif [[ "$part" == "$CUSTOM_IDX" ]]; then
+                read -r -p "  自定义 SAN（多个用逗号分隔，如 IP:1.2.3.4,DNS:example.com）: " custom_san
+                san_result+="${custom_san},"
                 break
-            elif [[ -n "$part" ]]; then
-                san_result+="$part,"
             fi
         done
         san_result="${san_result%,}"
