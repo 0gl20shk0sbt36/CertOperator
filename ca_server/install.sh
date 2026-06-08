@@ -111,15 +111,20 @@ CONFIG_YAML="$INSTALL_DIR/config.yaml"
 
 if _is_interactive; then
     # 3a. 覆盖安装时确认是否保留现有配置
+    OLD_SAN=""
+    OLD_USERS=""
     if [[ -f "$BACKUP_CONFIG" ]]; then
+        # 先读取旧值，无论用户选哪个都可能用到
+        OLD_SAN=$(grep "^  san:" "$BACKUP_CONFIG" 2>/dev/null | sed 's/^  san: *"*//;s/"$//')
+        OLD_USERS=$(grep "^  allowed_users:" "$BACKUP_CONFIG" 2>/dev/null | sed 's/^  allowed_users: *"*//;s/"$//')
         echo ""
         echo -e "${YELLOW}检测到已有配置（覆盖安装）${NC}"
         echo "  1) 保留现有配置（SAN、允许用户均不修改）"
-        echo "  2) 重新配置"
+        echo "  2) 重新配置（空输入保留原有字段）"
         read -r -p "请选择 [1/2] (默认 1): " cfg_choice
         if [[ "${cfg_choice:-1}" == "2" ]]; then
             BACKUP_CONFIG=""  # 丢弃备份，用新配置
-            info "将使用新的配置"
+            info "将使用新的配置（空输入保留原有字段）"
         else
             info "保留现有配置"
         fi
@@ -143,6 +148,7 @@ if _is_interactive; then
         echo "    $((i+1)). IP:${DETECTED_IPS[$i]}"
     done
     echo "    $(( ${#DETECTED_IPS[@]} + 1 )). 自定义输入"
+    echo "  回车跳过则${OLD_SAN:+保留原有: $OLD_SAN}${OLD_SAN:-保持为空}"
     read -r -p "  选择编号或直接输入（多个用逗号分隔，回车跳过）: " san_choice
     san_result=""
     if [[ -n "$san_choice" ]]; then
@@ -152,7 +158,6 @@ if _is_interactive; then
             if [[ "$part" =~ ^[0-9]+$ ]] && (( part >= 1 )) && (( part <= ${#DETECTED_IPS[@]} )); then
                 san_result+="IP:${DETECTED_IPS[$((part-1))]},"
             elif [[ "${san_parts[0]}" =~ ^[0-9]+$ ]] && (( 10#${san_parts[0]} == ${#DETECTED_IPS[@]} + 1 )); then
-                # 选项 N：自定义输入
                 read -r -p "  输入自定义 SAN（如 IP:1.2.3.4,DNS:example.com）: " custom_san
                 san_result="$custom_san"
                 break
@@ -161,14 +166,17 @@ if _is_interactive; then
             fi
         done
         san_result="${san_result%,}"
-        if [[ -n "$san_result" ]]; then
-            if grep -q "^  san:" "$CONFIG_YAML" 2>/dev/null; then
-                sed -i "s/^  san:.*/  san: \"$san_result\"/" "$CONFIG_YAML"
-            else
-                sed -i '/^server:/a\  san: "'"$san_result"'"' "$CONFIG_YAML"
-            fi
-            info "SAN 已设置: $san_result"
+    elif [[ -z "$san_choice" ]] && [[ -n "$OLD_SAN" ]]; then
+        san_result="$OLD_SAN"
+    fi
+    # 写入 config.yaml（空 + 无旧值 = 保持默认空，不写）
+    if [[ -n "$san_result" ]]; then
+        if grep -q "^  san:" "$CONFIG_YAML" 2>/dev/null; then
+            sed -i "s/^  san:.*/  san: \"$san_result\"/" "$CONFIG_YAML"
+        else
+            sed -i '/^server:/a\  san: "'"$san_result"'"' "$CONFIG_YAML"
         fi
+        info "SAN 已设置: $san_result"
     fi
 
     # 3c. 配置允许用户 — 列表选择 + 自定义输入
@@ -184,8 +192,17 @@ if _is_interactive; then
     for i in "${!user_arr[@]}"; do
         echo "    $((i+1)). ${user_arr[$i]}"
     done
+    echo "  回车跳过则${OLD_USERS:+保留原有: $OLD_USERS}${OLD_USERS:-保持为空}"
     read -r -p "  选择编号或直接输入用户名（多个用逗号分隔，回车跳过）: " user_input
-    if [[ -n "$user_input" ]]; then
+    if [[ -z "$user_input" ]] && [[ -n "$OLD_USERS" ]]; then
+        USERS_STR="$OLD_USERS"
+        if grep -q "^  allowed_users:" "$CONFIG_YAML" 2>/dev/null; then
+            sed -i "s/^  allowed_users:.*/  allowed_users: \"$USERS_STR\"/" "$CONFIG_YAML"
+        else
+            sed -i '/^ca:/a\  allowed_users: "'"$USERS_STR"'"' "$CONFIG_YAML"
+        fi
+        info "保留原有允许用户: $USERS_STR"
+    elif [[ -n "$user_input" ]]; then
         SELECTED_USERS=()
         IFS=',' read -ra parts <<< "$user_input"
         for part in "${parts[@]}"; do
