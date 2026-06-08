@@ -1,9 +1,6 @@
 server:
   host: "0.0.0.0"
   port: 8443
-  # 逗号分隔的 SAN（Server Alternative Names），用于自签证书
-  # 格式: IP:x.x.x.x 或 DNS:example.com
-  # 默认包含 localhost/127.0.0.1
   san: ""
 
 ca:
@@ -18,3 +15,7 @@ totp:
 rate_limit:
   max_attempts: 5
   window_seconds: 300
+
+# 组配置（可选）。不配置时使用全局 totp 和 ca 设置。
+# 每个组可覆盖 totp_secret、validity_hours、allowed_users、rate_limit。
+groups: {}

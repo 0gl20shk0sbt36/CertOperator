@@ -463,55 +463,59 @@ def _cmd_serve(args) -> None:
 
     @app.route("/api/get-cert", methods=["POST"])
     def api_get_cert():
-        # 实时读取允许用户，跟随 users set 即时生效
         _cfg = load_config()
-        _users = _cfg.get("ca", {}).get("allowed_users", "")
-        if not _users.strip():
-            return jsonify({
-                "success": False,
-                "error": "未配置允许用户，请先运行 users add",
-            }), 400
+        body = request.get_json(silent=True)
+        if not body or "totp" not in body:
+            return jsonify({"success": False, "error": "缺少 totp 字段"}), 400
 
-        # Rate limit
+        totp_code = str(body["totp"]).strip()
+        group_name = str(body.get("group") or "").strip()
+
+        # 分辨率组配置
+        groups = _cfg.get("groups", {}) or {}
+        if group_name and group_name in groups:
+            gcfg = groups[group_name]
+            _users = gcfg.get("allowed_users", "")
+            _secret = gcfg.get("totp_secret", "")
+            _secret_file = DATA_DIR / f"totp_secret_{group_name}.txt"
+            _validity_hours = gcfg.get("validity_hours", validity_hours)
+            g_rl = gcfg.get("rate_limit", {})
+            _max_attempts = g_rl.get("max_attempts", max_attempts)
+            _window_seconds = g_rl.get("window_seconds", window_seconds)
+        else:
+            _users = _cfg.get("ca", {}).get("allowed_users", "")
+            _secret = _read_totp_secret()
+            _secret_file = TOTP_SECRET_FILE
+            _validity_hours = validity_hours
+            _max_attempts = max_attempts
+            _window_seconds = window_seconds
+
+        if not _users.strip():
+            hint = f"groups users {group_name} add" if group_name else "users add"
+            return jsonify({"success": False, "error": f"未配置允许用户，请运行 {hint}"}), 400
+        if not _secret:
+            hint = f"groups totp {group_name} set" if group_name else "totp"
+            return jsonify({"success": False, "error": f"未配置 TOTP，请运行 {hint}"}), 400
+
+        # Rate limit — 使用全局限速器（按 remote_addr 计数）
         client_addr = request.remote_addr or "unknown"
         if not check_rate_limit(client_addr):
             return jsonify({
                 "success": False,
-                "error": f"请求过于频繁，请等待 {window_seconds} 秒后重试",
+                "error": f"请求频繁，请等待 {window_seconds} 秒",
             }), 429
 
-        # Parse body
-        body = request.get_json(silent=True)
-        if not body or "totp" not in body:
-            return jsonify({
-                "success": False,
-                "error": "请求体中缺少 totp 字段",
-            }), 400
-
-        totp_code = str(body["totp"]).strip()
-
-        # Validate format
-        if not totp_code.isdigit() or len(totp_code) != 6:
-            return jsonify({
-                "success": False,
-                "error": "TOTP 码格式错误：需要6位数字",
-            }), 400
-
         # Verify TOTP
-        if not totp.verify(totp_code, valid_window=1):
-            return jsonify({
-                "success": False,
-                "error": "TOTP 验证失败，请确认验证码正确且未过期",
-            }), 401
+        group_totp = pyotp.TOTP(_secret)
+        if not totp_code.isdigit() or len(totp_code) != 6:
+            return jsonify({"success": False, "error": "TOTP 码格式错误"}), 400
+        if not group_totp.verify(totp_code, valid_window=1):
+            return jsonify({"success": False, "error": "TOTP 验证失败"}), 401
 
-        # ---- Issue SSH certificate ----
         try:
-            result = _issue_cert(key_type, _users, validity_hours)
+            result = _issue_cert(key_type, _users, _validity_hours)
         except Exception as exc:
-            return jsonify({
-                "success": False,
-                "error": f"签发证书失败：{exc}",
-            }), 500
+            return jsonify({"success": False, "error": f"签发失败：{exc}"}), 500
 
         return jsonify({
             "success": True,
@@ -868,6 +872,149 @@ def _cmd_users(args) -> None:
 
 
 # ---------------------------------------------------------------------------
+# groups — group-level TOTP + allowed_users
+# ---------------------------------------------------------------------------
+
+
+def _cmd_groups(args) -> None:
+    cfg = load_config()
+    groups = cfg.get("groups", {}) or {}
+
+    if args.action == "list":
+        print("📁 当前组：")
+        if groups:
+            for gname, gcfg in sorted(groups.items()):
+                au = gcfg.get("allowed_users", "")
+                vh = gcfg.get("validity_hours", cfg.get("ca", {}).get("validity_hours", 1))
+                print(f"  📁 {gname}")
+                print(f"     允许用户: {au or '（未设置）'}")
+                print(f"     有效期:   {vh}h")
+                print(f"     TOTP:     {'✅' if gcfg.get('totp_secret') or groups[gname].get('totp_secret') else '❌'}")
+        else:
+            print("  （无）")
+        return
+
+    if args.action == "create":
+        gname = args.group_name
+        if not gname:
+            print("❌ 请指定组名")
+            return
+        if gname in groups:
+            print(f"❌ 组 {gname} 已存在")
+            return
+        groups[gname] = {"allowed_users": "", "validity_hours": 1}
+        cfg["groups"] = groups
+        save_config(cfg)
+        print(f"✅ 组 {gname} 已创建")
+        return
+
+    if args.action == "delete":
+        gname = args.group_name
+        if not gname:
+            print("❌ 请指定组名")
+            return
+        if gname not in groups:
+            print(f"❌ 组 {gname} 不存在")
+            return
+        del groups[gname]
+        cfg["groups"] = groups
+        save_config(cfg)
+        print(f"✅ 组 {gname} 已删除")
+        return
+
+    if args.action in ("users", "totp", "config"):
+        gname = args.group_name
+        if not gname:
+            print("❌ 请指定组名（groups users <组名> add <用户>）")
+            return
+        if gname not in groups:
+            print(f"❌ 组 {gname} 不存在，请先 groups create {gname}")
+            return
+        gcfg = groups[gname]
+
+        if args.action == "users":
+            if args.sub_action == "list":
+                au = gcfg.get("allowed_users", "")
+                print(f"📁 {gname} 用户: {au or '（空）'}")
+            elif args.sub_action in ("add", "remove"):
+                target = args.sub_user
+                if not target:
+                    print("❌ 请指定用户名")
+                    return
+                au_set = set()
+                for u in gcfg.get("allowed_users", "").replace(",", " ").split():
+                    u = u.strip()
+                    if u:
+                        au_set.add(u)
+                targets = [u.strip() for u in target.replace(",", " ").split() if u.strip()]
+                if args.sub_action == "add":
+                    for u in targets:
+                        au_set.add(u)
+                else:
+                    for u in targets:
+                        au_set.discard(u)
+                gcfg["allowed_users"] = ",".join(sorted(au_set))
+                groups[gname] = gcfg
+                cfg["groups"] = groups
+                save_config(cfg)
+                print(f"✅ {gname} 用户已更新: {gcfg['allowed_users'] or '（空）'}")
+            return
+
+        if args.action == "totp":
+            import pyotp  # noqa: F811
+            if args.sub_action == "set":
+                secret = pyotp.random_base32()
+                gcfg["totp_secret"] = secret
+                groups[gname] = gcfg
+                cfg["groups"] = groups
+                save_config(cfg)
+                issuer = cfg.get("totp", {}).get("issuer", "CertOperator")
+                account = f"{gname}-{cfg.get('totp', {}).get('account', 'admin')}"
+                totp_uri = pyotp.TOTP(secret).provisioning_uri(
+                    name=account, issuer_name=issuer
+                )
+                print(f"🔐 {gname} TOTP 已配置")
+                print(f"   Secret: {secret}")
+                # Print QR
+                try:
+                    import qrcode  # type: ignore  # noqa: F811
+                    qr = qrcode.QRCode(box_size=6, border=2)
+                    qr.add_data(totp_uri)
+                    qr.make(fit=True)
+                    qr.print_ascii()
+                    img = qr.make_image(fill_color="black", back_color="white")
+                    qr_path = DATA_DIR / f"totp_qrcode_{gname}.png"
+                    img.save(str(qr_path))
+                    print(f"   📄 图片已保存: {qr_path}")
+                except ImportError:
+                    print(f"   扫码 URI: {totp_uri}")
+            elif args.sub_action == "verify":
+                secret = gcfg.get("totp_secret")
+                if not secret:
+                    print(f"❌ {gname} 未配置 TOTP")
+                    return
+                code = pyotp.TOTP(secret).now()
+                print(f"🔐 {gname} 当前验证码: {code}")
+            return
+
+        if args.action == "config":
+            # 设置有效期、限速等
+            if args.validity_hours:
+                gcfg["validity_hours"] = float(args.validity_hours)
+            if args.max_attempts:
+                gcfg.setdefault("rate_limit", {})["max_attempts"] = int(args.max_attempts)
+            if args.window_seconds:
+                gcfg.setdefault("rate_limit", {})["window_seconds"] = int(args.window_seconds)
+            groups[gname] = gcfg
+            cfg["groups"] = groups
+            save_config(cfg)
+            print(f"✅ {gname} 配置已更新")
+            return
+
+        return
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -907,6 +1054,19 @@ def main() -> None:
     p_users.add_argument("user", nargs="?", default=None,
                          help="用户名（可逗号分隔多个，省略时进入交互模式）")
 
+    # groups
+    p_groups = sub.add_parser("groups", help="管理用户组（每组独立 TOTP + 有效期）")
+    p_groups.add_argument("action", choices=["list", "create", "delete", "users", "totp", "config"],
+                          nargs="?", default="list",
+                          help="操作: list | create | delete | users | totp | config")
+    p_groups.add_argument("group_name", nargs="?", default=None, help="组名")
+    p_groups.add_argument("sub_action", nargs="?", default=None,
+                          help="子操作: add | remove | list | set | verify")
+    p_groups.add_argument("sub_user", nargs="?", default=None, help="用户名")
+    p_groups.add_argument("--validity-hours", type=float, default=None, help="证书有效期（小时）")
+    p_groups.add_argument("--max-attempts", type=int, default=None, help="限速次数")
+    p_groups.add_argument("--window-seconds", type=int, default=None, help="限速窗口（秒）")
+
     args = parser.parse_args()
 
     if args.command == "init":
@@ -921,6 +1081,8 @@ def main() -> None:
         _cmd_pubkey()
     elif args.command == "users":
         _cmd_users(args)
+    elif args.command == "groups":
+        _cmd_groups(args)
     else:
         parser.print_help()
 
