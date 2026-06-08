@@ -148,6 +148,15 @@ def _cmd_init() -> None:
 
     # ---- 2. Generate HTTPS self-signed certificate ----
     print("🔨 生成 HTTPS 自签证书...")
+    san = cfg.get("server", {}).get("san", "")
+    # 始终包含 localhost 作为回退
+    san_list = ["DNS:localhost", "IP:127.0.0.1"]
+    if san.strip():
+        for entry in san.replace(",", " ").split():
+            entry = entry.strip()
+            if entry:
+                san_list.append(entry)
+    san_ext = "subjectAltName=" + ",".join(san_list)
     subprocess.run(
         [
             "openssl", "req", "-x509",
@@ -158,7 +167,7 @@ def _cmd_init() -> None:
             "-keyout", str(HTTPS_KEY),
             "-out", str(HTTPS_CERT),
             "-subj", "/CN=CertOperator/O=CertOperator/C=CN",
-            "-addext", "subjectAltName=DNS:localhost,IP:127.0.0.1",
+            "-addext", san_ext,
         ],
         check=True, capture_output=True,
     )
@@ -616,6 +625,57 @@ def _issue_cert(key_type: str, allowed_users: str, validity_hours: int) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# renew-cert — regenerate HTTPS certificate without touching CA keys
+# ---------------------------------------------------------------------------
+
+
+def _cmd_renew_cert() -> None:
+    """Regenerate HTTPS self-signed certificate only.  Keeps CA key pair and
+    client mTLS certs intact.  Use after updating ``server.san`` in
+    ``config.yaml`` to add new IPs/hostnames."""
+    ensure_data_dir()
+    cfg = load_config()
+
+    if not HTTPS_KEY.is_file():
+        print(f"❌ HTTPS 密钥不存在，请先运行: {_cmd_hint('init')}")
+        sys.exit(1)
+
+    san = cfg.get("server", {}).get("san", "")
+    san_list = ["DNS:localhost", "IP:127.0.0.1"]
+    if san.strip():
+        for entry in san.replace(",", " ").split():
+            entry = entry.strip()
+            if entry:
+                san_list.append(entry)
+    san_ext = "subjectAltName=" + ",".join(san_list)
+
+    print("🔨 重新生成 HTTPS 自签证书...")
+    print(f"   SAN: {san_list}")
+    subprocess.run(
+        [
+            "openssl", "req", "-x509",
+            "-newkey", "ec",
+            "-pkeyopt", "ec_paramgen_curve:prime256v1",
+            "-days", "3650",
+            "-nodes",
+            "-keyout", str(HTTPS_KEY),
+            "-out", str(HTTPS_CERT),
+            "-subj", "/CN=CertOperator/O=CertOperator/C=CN",
+            "-addext", san_ext,
+        ],
+        check=True, capture_output=True,
+    )
+    HTTPS_KEY.chmod(0o600)
+    HTTPS_CERT.chmod(0o644)
+    print(f"   ✅ HTTPS 证书已更新: {HTTPS_CERT}")
+    print(f"   ✅ 无需重启客户端，HTTPS 证书将自动生效")
+    print()
+    print(f"📋 证书 SAN（客户端必须匹配其中之一）:")
+    for s in san_list:
+        print(f"   {s}")
+
+
+# ---------------------------------------------------------------------------
 # pubkey
 # ---------------------------------------------------------------------------
 
@@ -830,6 +890,9 @@ def main() -> None:
     p_serve.add_argument("--port", type=int, help="监听端口（覆盖 config.yaml）")
     p_serve.add_argument("--no-mtls", action="store_true", help="禁用 mTLS 双向验证（仅单向 HTTPS）")
 
+    # renew-cert
+    sub.add_parser("renew-cert", help="重新生成 HTTPS 证书（更新 SAN，不碰 CA 密钥）")
+
     # pubkey
     sub.add_parser("pubkey", help="显示 CA 公钥")
 
@@ -849,6 +912,8 @@ def main() -> None:
         _cmd_totp(args)
     elif args.command == "serve":
         _cmd_serve(args)
+    elif args.command == "renew-cert":
+        _cmd_renew_cert()
     elif args.command == "pubkey":
         _cmd_pubkey()
     elif args.command == "users":

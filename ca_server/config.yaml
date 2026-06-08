@@ -1,13 +1,20 @@
+server:
+  host: "0.0.0.0"
+  port: 8443
+  # 逗号分隔的 SAN（Server Alternative Names），用于自签证书
+  # 格式: IP:x.x.x.x 或 DNS:example.com
+  # 默认包含 localhost/127.0.0.1
+  san: ""
+
 ca:
-  allowed_users: codewhale,root
   key_type: ed25519
   validity_hours: 1
+  allowed_users: ""
+
+totp:
+  issuer: "CertOperator"
+  account: "admin"
+
 rate_limit:
   max_attempts: 5
   window_seconds: 300
-server:
-  host: 0.0.0.0
-  port: 8443
-totp:
-  account: admin
-  issuer: CertOperator

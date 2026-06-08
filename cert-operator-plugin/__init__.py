@@ -342,10 +342,20 @@ def _handle_get_sub_cert(
         return json.dumps(result, ensure_ascii=False)
 
     except requests.exceptions.SSLError as e:
+        msg = str(e)
+        hint = (
+            "如果服务器使用自签证书，请传入 ca_cert_path 参数"
+        )
+        if "hostname" in msg.lower() or "match" in msg.lower():
+            hint = (
+                "服务器证书 SAN 不匹配当前地址 — 需要在服务器上更新 HTTPS 证书：\n"
+                "  1. 编辑 config.yaml，在 server.san 中加入 IP:121.196.206.66 等地址\n"
+                "  2. 运行 python3 ca_server.py renew-cert（不碰 CA 密钥）\n"
+                "  3. 重启服务 sudo systemctl restart cert-operator"
+            )
         return json.dumps({
             "success": False,
-            "error": f"SSL 验证失败: {e}\n"
-            "如果服务器使用自签证书，请传入 ca_cert_path 参数",
+            "error": f"SSL 验证失败: {msg}\n{hint}",
         }, ensure_ascii=False)
     except requests.exceptions.ConnectionError as e:
         return json.dumps({
