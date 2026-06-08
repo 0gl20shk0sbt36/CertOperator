@@ -38,7 +38,7 @@ def get_sub_cert(
     server: str,
     totp_code: str,
     cert_name: str,
-    ca_cert_path: str,
+    ca_cert_path: Optional[str] = None,
     client_cert: Optional[str] = None,
     client_key: Optional[str] = None,
     *,
@@ -46,15 +46,19 @@ def get_sub_cert(
 ) -> dict:
     """Request a signed SSH sub-certificate from the CA server.
 
+    All cert paths default to ``~/.hermes/certs/`` when omitted.
+    Run ``bash deploy.sh`` once to deploy the three cert files there.
+
     Args:
         server: CA server base URL, e.g. ``https://ca.example.com:8443``.
         totp_code: 6-digit TOTP code from the user's authenticator app.
         cert_name: File-safe name for the certificate identity.
         ca_cert_path: Path to the CA server's HTTPS self-signed certificate
-                      (required; SSL verification is never skipped).
-        client_cert: Path to mTLS client certificate (optional, but required
-                     when server enforces mTLS).
-        client_key: Path to mTLS client private key.
+                      (default ``~/.hermes/certs/ca-https-cert.pem``).
+        client_cert: Path to mTLS client certificate
+                     (default ``~/.hermes/certs/client.cert``).
+        client_key: Path to mTLS client private key
+                     (default ``~/.hermes/certs/client.key``).
         timeout: Request timeout in seconds (default 30).
 
     Returns:
@@ -68,6 +72,12 @@ def get_sub_cert(
     if not totp_code.isdigit() or len(totp_code) != 6:
         raise CertFetchError(f"TOTP 码格式错误：需要6位数字，收到 {len(totp_code)} 个字符")
 
+    # ---- Default paths to ~/.hermes/certs/ ----
+    certs_dir = Path.home() / ".hermes" / "certs"
+    ca_cert_path = ca_cert_path or str(certs_dir / "ca-https-cert.pem")
+    client_cert = client_cert or str(certs_dir / "client.cert")
+    client_key = client_key or str(certs_dir / "client.key")
+
     # ---- Validate ca_cert_path ----
     ca_path = Path(ca_cert_path).expanduser()
     if not ca_path.is_file():
@@ -75,7 +85,7 @@ def get_sub_cert(
 
     # ---- Validate mTLS cert files ----
     cert_tuple = None
-    if client_cert and client_key:
+    if client_cert:
         client_cert_path = Path(client_cert).expanduser()
         client_key_path = Path(client_key).expanduser()
         if not client_cert_path.is_file():
