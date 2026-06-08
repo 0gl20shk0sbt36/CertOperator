@@ -44,10 +44,16 @@ fi
 # 2. 解压文件，保留已有 data/ dist/ .venv
 # =============================================================================
 BACKUP_DATA=""
+BACKUP_CONFIG=""
 if [[ -d "$INSTALL_DIR/data" ]]; then
     BACKUP_DATA=$(mktemp -d)
     cp -r "$INSTALL_DIR/data" "$BACKUP_DATA/"
     info "已有 data/ 已备份"
+fi
+if [[ -f "$INSTALL_DIR/config.yaml" ]]; then
+    BACKUP_CONFIG=$(mktemp)
+    cp "$INSTALL_DIR/config.yaml" "$BACKUP_CONFIG"
+    info "已有 config.yaml 已备份"
 fi
 BACKUP_DIST=""
 if [[ -d "$INSTALL_DIR/dist" ]]; then
@@ -74,11 +80,16 @@ else
     rm -rf "$INSTALL_DIR"/__pycache__ "$INSTALL_DIR"/.venv
 fi
 
-# 恢复 data/ 和 dist/
+# 恢复 data/、config.yaml、dist/
 if [[ -n "$BACKUP_DATA" ]]; then
     rm -rf "$INSTALL_DIR/data"
     mv "$BACKUP_DATA/data" "$INSTALL_DIR/data"
     info "data/ 已保留"
+fi
+if [[ -n "$BACKUP_CONFIG" ]]; then
+    cp "$BACKUP_CONFIG" "$INSTALL_DIR/config.yaml"
+    rm -f "$BACKUP_CONFIG"
+    info "config.yaml 已保留（用户配置未丢失）"
 fi
 if [[ -n "$BACKUP_DIST" ]]; then
     rm -rf "$INSTALL_DIR/dist"
