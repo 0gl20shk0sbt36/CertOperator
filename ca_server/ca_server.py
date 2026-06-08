@@ -538,10 +538,19 @@ def _cmd_serve(args) -> None:
         # 实时读取配置，避免 users set 后未重启导致的过期数据
         _cfg = load_config()
         _users = _cfg.get("ca", {}).get("allowed_users", "")
+        _groups = _cfg.get("groups", {}) or {}
+        _groups_info = {}
+        for gname, gcfg in _groups.items():
+            _groups_info[gname] = {
+                "allowed_users": gcfg.get("allowed_users", ""),
+                "validity_hours": gcfg.get("validity_hours", validity_hours),
+                "totp_configured": bool(gcfg.get("totp_secret")),
+            }
         return jsonify({
             "ca_key_type": key_type,
             "validity_hours": validity_hours,
             "allowed_users": _users,
+            "groups": _groups_info,
             "ca_public_key": CA_KEY_PUB.read_text().strip() if CA_KEY_PUB.is_file() else None,
         })
 
