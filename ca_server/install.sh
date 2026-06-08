@@ -159,25 +159,28 @@ if _is_interactive; then
     for i in "${!DETECTED_IPS[@]}"; do
         echo "    $((i+1)). IP:${DETECTED_IPS[$i]}"
     done
-    echo "    $(( ${#DETECTED_IPS[@]} + 1 )). 自定义输入"
-    CUSTOM_IDX=$(( ${#DETECTED_IPS[@]} + 1 ))
     echo "  回车跳过则${OLD_SAN:+保留原有: $OLD_SAN}${OLD_SAN:-保持为空}"
-    read -r -p "  输入编号（多个用逗号分隔，如 1,2；选 $CUSTOM_IDX 进入自定义）: " san_choice
+    echo ""
+    echo "  1) 从以上 IP 中选择（输入编号，逗号分隔多选）"
+    echo "  2) 自定义输入"
+    read -r -p "  请选择 [1/2] (回车跳过): " san_mode
     san_result=""
-    if [[ -n "$san_choice" ]]; then
-        IFS=',' read -ra san_parts <<< "$san_choice"
-        for part in "${san_parts[@]}"; do
-            part=$(echo "$part" | tr -d ' ')
-            if [[ "$part" =~ ^[0-9]+$ ]] && (( part >= 1 )) && (( part <= ${#DETECTED_IPS[@]} )); then
-                san_result+="IP:${DETECTED_IPS[$((part-1))]},"
-            elif [[ "$part" == "$CUSTOM_IDX" ]]; then
-                read -r -p "  自定义 SAN（多个用逗号分隔，如 IP:1.2.3.4,DNS:example.com）: " custom_san
-                san_result+="${custom_san},"
-                break
-            fi
-        done
-        san_result="${san_result%,}"
-    elif [[ -z "$san_choice" ]] && [[ -n "$OLD_SAN" ]]; then
+    if [[ "$san_mode" == "2" ]]; then
+        read -r -p "  输入 SAN（多个用逗号分隔，如 IP:1.2.3.4,DNS:example.com）: " custom_san
+        san_result="$custom_san"
+    elif [[ "$san_mode" == "1" ]]; then
+        read -r -p "  输入编号（逗号分隔多选，如 1,3）: " idx_input
+        if [[ -n "$idx_input" ]]; then
+            IFS=',' read -ra idx_parts <<< "$idx_input"
+            for idx in "${idx_parts[@]}"; do
+                idx=$(echo "$idx" | tr -d ' ')
+                if [[ "$idx" =~ ^[0-9]+$ ]] && (( idx >= 1 )) && (( idx <= ${#DETECTED_IPS[@]} )); then
+                    san_result+="IP:${DETECTED_IPS[$((idx-1))]},"
+                fi
+            done
+            san_result="${san_result%,}"
+        fi
+    elif [[ -z "$san_mode" ]] && [[ -n "$OLD_SAN" ]]; then
         san_result="$OLD_SAN"
     fi
     # 写入 config.yaml（空 + 无旧值 = 保持默认空，不写）
