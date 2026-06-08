@@ -46,6 +46,10 @@ DEFAULT_CERTS_DIR = Path.home() / ".hermes" / "certs"
 DEFAULT_TIMEOUT = 30
 """HTTPS 请求超时秒数。"""
 
+DEFAULT_CA_CERT = DEFAULT_CERTS_DIR / "ca-https-cert.pem"
+DEFAULT_CLIENT_CERT = DEFAULT_CERTS_DIR / "client.cert"
+DEFAULT_CLIENT_KEY = DEFAULT_CERTS_DIR / "client.key"
+
 # ---------------------------------------------------------------------------
 # 工具函数
 # ---------------------------------------------------------------------------
@@ -128,11 +132,13 @@ def _request_cert(
     if api_key:
         headers["X-API-Key"] = api_key
 
-    # SSL 验证配置：传入 CA 证书路径则启用验证，否则跳过
-    verify = ca_cert_path if ca_cert_path else False
+    # SSL 验证配置：传入 CA 证书路径则启用验证，否则使用默认路径
+    verify = ca_cert_path or str(DEFAULT_CA_CERT)
 
-    # mTLS 客户端证书
-    cert = (client_cert, client_key) if client_cert and client_key else None
+    # mTLS 客户端证书：使用传入或默认路径
+    client_cert = client_cert or str(DEFAULT_CLIENT_CERT)
+    client_key = client_key or str(DEFAULT_CLIENT_KEY)
+    cert = (client_cert, client_key)
 
     logger.info("请求子证书: %s (verify=%s, mtls=%s)", url, verify, bool(cert))
 
@@ -196,8 +202,8 @@ def _run_ssh(
         "ssh",
         "-i", str(key_file),
         "-p", str(port),
-        "-o", "StrictHostKeyChecking=accept-new",
-        "-o", "UserKnownHostsFile=/dev/null",
+        "-o", "StrictHostKeyChecking=yes",
+        "-o", f"UserKnownHostsFile={DEFAULT_CERTS_DIR}/known_hosts",
         "-o", "ConnectTimeout=15",
     ]
 
@@ -264,8 +270,7 @@ SCHEMA_GET_SUB_CERT = {
             },
             "ca_cert_path": {
                 "type": "string",
-                "description": "自签 CA 的 HTTPS 证书路径，启用 SSL 验证。"
-                "不传则跳过证书验证（非生产环境可用）",
+                "description": "自签 CA 的 HTTPS 证书路径，默认 ~/.hermes/certs/ca-https-cert.pem",
             },
             "client_cert": {
                 "type": "string",
