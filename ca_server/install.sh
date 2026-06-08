@@ -141,7 +141,7 @@ if _is_interactive; then
         if [[ -n "$ip" ]] && [[ "$ip" != "127.0.0.1" ]] && [[ "$ip" != "::1" ]]; then
             DETECTED_IPS+=("$ip")
         fi
-    done < <(hostname -I 2>/dev/null; echo)
+    done < <(hostname -I 2>/dev/null | tr ' ' '\n'; echo)
 
     echo "  检测到本机 IP："
     for i in "${!DETECTED_IPS[@]}"; do
