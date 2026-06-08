@@ -104,7 +104,9 @@ python3 ca_server.py serve
 python3 ca_server.py pubkey
 ```
 
-### 客户端
+### 客户端（你日常操作的电脑）
+
+cert-operator 客户端是你日常使用的电脑（笔记本、开发机）。通过它向 CA 服务器申请短期 SSH 证书，然后登录目标服务器。
 
 ```bash
 # 获取证书
