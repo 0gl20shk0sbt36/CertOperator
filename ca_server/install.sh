@@ -134,7 +134,7 @@ if _is_interactive; then
     echo ""
     echo -e "${YELLOW}服务器地址配置（用于 HTTPS 证书 SAN）${NC}"
 
-    # 自动检测本机 IP
+    # 自动检测本机 IP（内网 + 公网）
     DETECTED_IPS=()
     while IFS= read -r ip; do
         ip=$(echo "$ip" | tr -d ' ')
@@ -142,6 +142,18 @@ if _is_interactive; then
             DETECTED_IPS+=("$ip")
         fi
     done < <(hostname -I 2>/dev/null | tr ' ' '\n'; echo)
+    # 额外尝试获取公网 IP
+    if command -v curl &>/dev/null; then
+        PUBLIC_IP=$(curl -s --max-time 3 ifconfig.me 2>/dev/null || curl -s --max-time 3 ip.sb 2>/dev/null || true)
+        if [[ -n "$PUBLIC_IP" ]]; then
+            # 去重：如果 hostname -I 已经包含则不再重复
+            found=0
+            for ip in "${DETECTED_IPS[@]}"; do
+                [[ "$ip" == "$PUBLIC_IP" ]] && { found=1; break; }
+            done
+            [[ $found -eq 0 ]] && DETECTED_IPS+=("$PUBLIC_IP")
+        fi
+    fi
 
     echo "  检测到本机 IP："
     for i in "${!DETECTED_IPS[@]}"; do
