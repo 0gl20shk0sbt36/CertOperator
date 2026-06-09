@@ -203,38 +203,43 @@ ssh-keygen -L -f ~/.hermes/certs/my-server-cert.pub
 
 ### 目标服务器配置（另一台机器）
 
-如果目标服务器和 CA 服务器是同一台机器，安装脚本已自动配置 `TrustedUserCAKeys`（CA 公钥信任），**可直接用证书 SSH 登录**。但 pam-ussh 仍需手动安装，sudo 扩展才生效。
+如果目标服务器和 CA 服务器是同一台机器，安装脚本已自动配置 `TrustedUserCAKeys`（CA 公钥信任），**可直接用证书 SSH 登录**。pam-ussh 需手动安装。
 
 如需部署到其他目标服务器，每台都执行以下步骤：
 
 ```bash
-# 1. 从源码安装 pam-ussh（Ubuntu/Debian 没有预编译包）
-sudo apt install -y build-essential libpam-dev libssl-dev golang-go
-git clone https://github.com/uber/pam-ussh.git /tmp/pam-ussh
-# pam-ussh 的 Makefile 用旧版 go get，新版 Go 需改一行
-cd /tmp/pam-ussh
-sed -i 's|go get |go install |' Makefile
-make && sudo make install
-
-# 2. 复制 CA 公钥到本机
+# ------------------------------------------
+# A. 基础配置（证书 SSH 登录）
+# ------------------------------------------
+# 1. 复制 CA 公钥
 scp ca-server:/opt/ca_server/data/ca_key.pub /etc/ssh/ca_key.pub
 
-# 3. 配置 sshd 信任该公钥
+# 2. 配置 sshd 信任
 echo "TrustedUserCAKeys /etc/ssh/ca_key.pub" >> /etc/ssh/sshd_config
+systemctl restart sshd
+
+# ------------------------------------------
+# B. sudo 权限控制（pam-ussh）
+# ------------------------------------------
+# 3. 安装 pam-ussh（Ubuntu/Debian 无预编译包）
+apt install -y build-essential libpam-dev
+git clone https://github.com/uber/pam-ussh.git /tmp/pam-ussh
+cd /tmp/pam-ussh && make && make install
 
 # 4. 配置 sudo 使用 pam_ussh
-echo "auth sufficient pam_ussh.so" >> /etc/pam.d/sudo
+#    限制只有 principals 为 root 的证书可执行 sudo
+cat > /etc/pam.d/sudo << 'PAM'
+auth [success=1 default=ignore] /lib/security/pam_ussh.so ca_file=/etc/ssh/ca_key.pub authorized_principals=root
+auth requisite                  pam_deny.so
+auth required                   pam_permit.so
+PAM
 
-# 5. 配置 pam_ussh 只允许带 sudo@cert-operator 扩展的用户
-cat > /etc/security/pam_ussh.conf << 'EOF'
-cert_extensions = sudo@cert-operator
-EOF
-
-# 6. 重启 SSH
-sudo systemctl restart sshd
+# 5. 确保 SSH Agent Forwarding 开启（客户端 ssh -A）
 ```
 
-> 原理：持有带 `sudo@cert-operator` 扩展证书的用户 SSH 登录时，pam_ussh 检测到该扩展，允许执行 sudo。没有该扩展的证书（如普通用户组）执行 sudo 会被拒绝。
+> **原理**：pam-ussh 读取 SSH Agent 中的证书，检查证书的 principals 是否包含 `authorized_principals` 中配置的用户（如 `root`）。admin 组签发的证书含 `root` principal，可 sudo；普通用户组签发的证书不含 `root`，sudo 被拒绝。
+>
+> **客户端 SSH 时必须用 `ssh -A`**（Agent Forwarding），否则 pam-ussh 找不到证书。
 
 ## 子命令参考
 
