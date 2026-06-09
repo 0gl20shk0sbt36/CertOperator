@@ -476,6 +476,10 @@ def _cmd_serve(args) -> None:
         _users = gcfg.get("allowed_users", "")
         _secret = gcfg.get("totp_secret", "")
         _validity_hours = gcfg.get("validity_hours", validity_hours)
+        _frozen = gcfg.get("frozen", False) is True or str(gcfg.get("frozen", "")).lower() in ("yes", "1", "true")
+
+        if _frozen:
+            return jsonify({"success": False, "error": f"组 {group_name or 'default'} 已被冻结"}), 403
 
         if not _users.strip():
             hint = f"groups users {group_name} add" if group_name else "users add"
@@ -542,19 +546,24 @@ def _cmd_serve(args) -> None:
             _has_totp = bool(_resolved.get("totp_secret", ""))
             _users = _resolved.get("allowed_users", "")
 
+            _frozen = gcfg.get("frozen") is True or str(gcfg.get("frozen", "")).lower() in ("true", "yes", "1")
+            _ready = _has_totp and _users.strip() and not _frozen
+
             if _d == "full":
                 _groups_info[gname] = {
                     "allowed_users": _users,
                     "validity_hours": _resolved.get("validity_hours", validity_hours),
                     "totp_configured": _has_totp,
+                    "frozen": _frozen,
                     "parent": gcfg.get("parent", "") or None,
                     "extensions": _resolved.get("extensions", {}),
                 }
-            else:
-                # basic: 可用的组 + 允许用户列表
+            elif _ready:
+                # basic: 只返回可正常使用的组
+                _exts = _resolved.get("extensions", {})
                 _groups_info[gname] = {
-                    "status": "ready" if _has_totp and _users.strip() else "incomplete",
                     "allowed_users": _users,
+                    "sudo": bool(_exts.get("sudo")),
                 }
 
         result = {
@@ -1030,6 +1039,8 @@ def _cmd_groups(args) -> None:
                     print(f"     允许用户:    {au or '（未设置）'}")
                 print(f"     有效期:      {vh}h")
                 print(f"     TOTP:        {'✅' if gcfg.get('totp_secret') else '❌'}")
+                if gcfg.get("frozen"):
+                    print(f"     ❄ 已冻结")
                 if exts:
                     print(f"     extensions:  {exts}")
         else:
@@ -1160,6 +1171,11 @@ def _cmd_groups(args) -> None:
                 elif args.sudo.lower() in ("no", "false", "0", ""):
                     exts.pop("sudo", None)
                 gcfg["extensions"] = exts
+            if args.frozen is not None:
+                if args.frozen.lower() in ("yes", "true", "1"):
+                    gcfg["frozen"] = True
+                elif args.frozen.lower() in ("no", "false", "0", ""):
+                    gcfg["frozen"] = False
             groups[gname] = gcfg
             cfg["groups"] = groups
             save_config(cfg)
@@ -1231,6 +1247,7 @@ def main() -> None:
     p_groups.add_argument("--window-seconds", type=int, default=None, help="限速窗口（秒）")
     p_groups.add_argument("--parent", type=str, default=None, help="父组名（继承其 allowed_users 和配置）")
     p_groups.add_argument("--sudo", type=str, default=None, help="证书签入 sudo 扩展（如 --sudo yes）")
+    p_groups.add_argument("--frozen", type=str, default=None, help="冻结组（yes/no）")
 
     args = parser.parse_args()
 

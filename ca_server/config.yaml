@@ -6,6 +6,7 @@ groups:
     allowed_users: root
     extensions:
       sudo: 'yes'
+    frozen: true
     parent: default
     validity_hours: 1
   base-ops:
@@ -18,7 +19,7 @@ groups:
     allowed_users: root
     extensions: {}
     parent: ''
-    totp_secret: DKCJQHBHQ7P5RYJOCIIW62P64IZVW4RC
+    totp_secret: RKHQKMHHBZJJ7RQJH5MWHIXQKU536ACG
     validity_hours: 1
 rate_limit:
   max_attempts: 5
