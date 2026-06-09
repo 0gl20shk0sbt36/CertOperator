@@ -316,11 +316,18 @@ chmod +x /usr/local/bin/cert-operator
 info "快捷命令已安装: cert-operator"
 
 # =============================================================================
-# 6b. 安装 cert-sudo-check（PAM sudo 权限检查）
+# 6b. 安装 cert-sudo-check + 配置 PAM
 # =============================================================================
 if [[ -f "$INSTALL_DIR/cert-sudo-check" ]]; then
     cp "$INSTALL_DIR/cert-sudo-check" /usr/local/bin/cert-sudo-check
     chmod +x /usr/local/bin/cert-sudo-check
+    # 配置 PAM（只在首次安装，不覆盖已有配置）
+    PAM_FILE="/etc/pam.d/sudo"
+    if [[ -f "$PAM_FILE" ]] && ! grep -q "cert-sudo-check" "$PAM_FILE" 2>/dev/null; then
+        cp "$PAM_FILE" "${PAM_FILE}.bak.$(date +%s)"
+        sed -i '1i\# cert-operator: SSH 证书扩展检查\nauth sufficient pam_exec.so /usr/local/bin/cert-sudo-check\nauth requisite              pam_deny.so\nauth required               pam_permit.so' "$PAM_FILE"
+        info "PAM sudo 已配置（证书含 sudo@cert-operator 扩展的用户可 sudo）"
+    fi
 fi
 
 # =============================================================================
