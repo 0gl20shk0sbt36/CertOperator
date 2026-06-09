@@ -186,6 +186,7 @@ cert-operator groups config <name> \              # 修改组配置
     --parent operator \                            #  设置父组
     --validity-hours 0.166 \                      #  设置有效期
     --sudo yes                                    #  开启 sudo 扩展
+    --frozen yes                                  #  冻结组（停止签发）
 ```
 
 ## 证书扩展（sudo）
@@ -219,7 +220,7 @@ ssh-keygen -L -f ~/.hermes/certs/my-server-cert.pub
 | `groups delete <name>` | 删除组 |
 | `groups users <name> add <user>` | 添加组成员 |
 | `groups totp <name> set` | 配置组 TOTP |
-| `groups config <name>` | 修改组配置（--sudo / --parent / --validity-hours） |
+| `groups config <name>` | 修改组配置（--sudo / --parent / --validity-hours / --frozen） |
 | `totp` | 配置 default 组 TOTP |
 | `totp --verify` | 显示当前验证码 |
 | `pubkey` | 显示 CA 公钥 + 目标服务器部署命令 |

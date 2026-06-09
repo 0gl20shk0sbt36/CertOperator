@@ -6,8 +6,9 @@ groups:
     allowed_users: root
     extensions:
       sudo: 'yes'
-    frozen: true
+    frozen: false
     parent: default
+    totp_secret: CUTMZVFX2V44KQSAJNX4NBF35CLXT54U
     validity_hours: 1
   base-ops:
     allowed_users: operator,root
