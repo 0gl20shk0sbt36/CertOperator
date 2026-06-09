@@ -24,7 +24,7 @@ fi
 if [[ ! -f "$CA_PUB_FILE" ]]; then
     exit 1
 fi
-CA_FINGERPRINT=$(ssh-keygen -lf "$CA_PUB_FILE" 2>/dev/null) || exit 1
+CA_FP=$(ssh-keygen -lf "$CA_PUB_FILE" 2>/dev/null | awk '{print $2}') || exit 1
 
 # ---- 逐一检查每个身份 ----
 while IFS= read -r line; do
@@ -39,7 +39,7 @@ while IFS= read -r line; do
     rm -f "$TMP"
 
     # 检查 CA 签名（验证是否由我们签发）
-    if ! echo "$INFO" | grep -qF "$CA_FINGERPRINT"; then
+    if ! echo "$INFO" | grep -q "$CA_FP"; then
         continue  # 不是我们签发的证书，跳过
     fi
 
