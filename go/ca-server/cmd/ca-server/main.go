@@ -38,15 +38,18 @@ func init() {
 }
 
 func main() {
-	if len(os.Args) < 2 {
+	if len(os.Args) < 2 || os.Args[1] == "--help" || os.Args[1] == "-h" {
 		printUsage()
-		os.Exit(1)
+		os.Exit(0)
 	}
 
 	cmd := os.Args[1]
 	args := os.Args[2:]
 
 	switch cmd {
+	case "help":
+		printUsage()
+		os.Exit(0)
 	case "init":
 		cmdInit()
 	case "serve":
@@ -71,6 +74,46 @@ func main() {
 }
 
 func printUsage() {
+	fmt.Fprintf(os.Stderr, `cert-operator v%s — TOTP-gated SSH certificate authority
+
+Usage:
+  ca-server [command] [flags]
+  ca-server --help         Show this help
+  ca-server --version      Show version
+
+Commands:
+  init                     Initialize CA (keys, HTTPS cert, client cert, deploy)
+  serve [flags]            Start HTTPS API server
+  pubkey                   Show CA public key
+  totp [--verify|--regenerate]  TOTP management (default group)
+  groups [action] [args]   Group management (see "groups --help")
+  renew-cert               Regenerate HTTPS certificate
+  version                  Show version
+
+Use "ca-server <command> --help" for more information.
+`, VERSION)
+}
+
+func printGroupsHelp() {
+	fmt.Fprintf(os.Stderr, `cert-operator v%s — Group management
+
+Usage:
+  ca-server groups list                                       List all groups
+  ca-server groups create <name>                              Create a group
+  ca-server groups delete <name>                              Delete a group
+  ca-server groups users <name> list                          List group users
+  ca-server groups users <name> add <user,...>                Add users
+  ca-server groups users <name> remove <user,...>             Remove users
+  ca-server groups totp <name> set                            Generate TOTP secret
+  ca-server groups totp <name> verify                         Show current TOTP code
+  ca-server groups config <name> get [key]                    Get group config
+  ca-server groups config <name> set <key> <value>            Set group config
+
+Keys for "config set": sudo, frozen, validity-minutes, parent, allowed-users
+`, VERSION)
+}
+
+func _legacy_printUsage() {
 	fmt.Fprintf(os.Stderr, `cert-operator v%s — TOTP-gated SSH certificate authority
 
 Usage:
@@ -374,6 +417,10 @@ func cmdUsers(args []string) {
 func cmdGroups(args []string) {
 	if len(args) == 0 {
 		args = []string{"list"}
+	}
+	if args[0] == "--help" || args[0] == "-h" {
+		printGroupsHelp()
+		return
 	}
 
 	action := args[0]
