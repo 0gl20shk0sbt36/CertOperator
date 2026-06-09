@@ -201,7 +201,11 @@ ssh-keygen -L -f ~/.hermes/certs/my-server-cert.pub
 #     sudo@cert-operator UNKNOWN FLAG OPTION
 ```
 
-### 目标服务器配置（含 sudo 支持）
+### 目标服务器配置（另一台机器）
+
+如果目标服务器和 CA 服务器是同一台机器，安装脚本已自动配置，**无需额外操作**。
+
+如需部署到其他目标服务器，每台都执行以下步骤：
 
 ```bash
 # 1. 安装 pam-ussh
@@ -209,7 +213,7 @@ ssh-keygen -L -f ~/.hermes/certs/my-server-cert.pub
 sudo apt install -y libpam-ssh2
 # 或从源码编译: https://github.com/uber/pam-ussh
 
-# 2. 从 CA 服务器复制公钥到本机
+# 2. 复制 CA 公钥到本机
 scp ca-server:/opt/ca_server/data/ca_key.pub /etc/ssh/ca_key.pub
 
 # 3. 配置 sshd 信任该公钥
