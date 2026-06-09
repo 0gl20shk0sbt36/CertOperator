@@ -208,10 +208,10 @@ ssh-keygen -L -f ~/.hermes/certs/my-server-cert.pub
 如需部署到其他目标服务器，每台都执行以下步骤：
 
 ```bash
-# 1. 安装 pam-ussh
-# Debian/Ubuntu
-sudo apt install -y libpam-ssh2
-# 或从源码编译: https://github.com/uber/pam-ussh
+# 1. 从源码安装 pam-ussh（Ubuntu/Debian 没有预编译包）
+sudo apt install -y build-essential libpam-dev libssl-dev
+git clone https://github.com/uber/pam-ussh.git /tmp/pam-ussh
+cd /tmp/pam-ussh && make && sudo make install
 
 # 2. 复制 CA 公钥到本机
 scp ca-server:/opt/ca_server/data/ca_key.pub /etc/ssh/ca_key.pub
