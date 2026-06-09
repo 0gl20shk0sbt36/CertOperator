@@ -42,6 +42,14 @@ info "快捷命令: cert-operator → sudo -u cert-operator /opt/ca_server/bin/c
 info "初始化 CA..."
 su -s /bin/bash "$SERVICE_USER" -c "cd '$INSTALL_DIR' && '$INSTALL_DIR/bin/ca-server' init"
 
+# 拷贝卸载脚本到安装目录
+if [[ -f "$(dirname "$0")/uninstall.sh" ]]; then
+    cp "$(dirname "$0")/uninstall.sh" "$INSTALL_DIR/uninstall.sh"
+    chmod 755 "$INSTALL_DIR/uninstall.sh"
+    chown "root:$SERVICE_USER" "$INSTALL_DIR/uninstall.sh"
+    info "卸载脚本: $INSTALL_DIR/uninstall.sh"
+fi
+
 # systemd 服务
 cat > /etc/systemd/system/$SERVICE_NAME.service << UNIT
 [Unit]
@@ -60,7 +68,9 @@ NoNewPrivileges=true
 [Install]
 WantedBy=multi-user.target
 UNIT
-info "systemd 服务已安装"
+systemctl daemon-reload
+systemctl enable "$SERVICE_NAME" 2>/dev/null || true
+info "systemd 服务已安装 ($SERVICE_NAME)"
 
 echo ""
 echo "✅ 部署完成"
