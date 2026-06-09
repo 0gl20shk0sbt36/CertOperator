@@ -1,18 +1,20 @@
-server:
-  host: "0.0.0.0"
-  port: 8443
-  san: ""
-
 ca:
   key_type: ed25519
   validity_hours: 1
-
-totp:
-  issuer: "CertOperator"
-  account: "admin"
-
+groups:
+  test:
+    allowed_users: ''
+    extensions:
+      sudo: 'yes'
+    parent: ''
+    validity_hours: 1
 rate_limit:
   max_attempts: 5
   window_seconds: 300
-
-groups: {}
+server:
+  host: 0.0.0.0
+  port: 8443
+  san: ''
+totp:
+  account: admin
+  issuer: CertOperator

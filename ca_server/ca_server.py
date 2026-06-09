@@ -1047,7 +1047,9 @@ def _cmd_groups(args) -> None:
                 print(f"     TOTP:        {'✅' if gcfg.get('totp_secret') else '❌'}")
                 if gcfg.get("frozen"):
                     print(f"     ❄ 已冻结")
-                if exts:
+                if exts.get("sudo"):
+                    print(f"     sudo:        ✅ 允许")
+                elif exts:
                     print(f"     extensions:  {exts}")
         else:
             print("  （无）")
