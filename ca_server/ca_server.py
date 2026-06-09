@@ -569,7 +569,6 @@ def _cmd_serve(args) -> None:
                 }
 
         result = {
-            "version": VERSION,
             "ca_key_type": key_type,
             "ca_public_key": CA_KEY_PUB.read_text().strip() if CA_KEY_PUB.is_file() else None,
         }
@@ -580,6 +579,10 @@ def _cmd_serve(args) -> None:
         else:
             result["groups"] = _groups_info
         return jsonify(result)
+
+    @app.route("/api/version", methods=["GET"])
+    def api_version():
+        return jsonify({"version": VERSION, "name": "cert-operator"})
 
     # ---- Start ----
     print(f"🚀 cert-operator v{VERSION} — CA 服务器启动中...")
