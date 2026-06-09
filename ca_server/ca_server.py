@@ -1051,8 +1051,8 @@ def _cmd_groups(args) -> None:
                     print(f"     ❄ 已冻结")
                 if r_exts.get("sudo"):
                     print(f"     sudo:        ✅ 允许")
-                elif r_exts:
-                    print(f"     extensions:  {r_exts}")
+                else:
+                    print(f"     sudo:        ❌ 不允许")
         else:
             print("  （无）")
         return
