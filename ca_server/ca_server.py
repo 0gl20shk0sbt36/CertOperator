@@ -1211,11 +1211,16 @@ def _cmd_groups(args) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="CertOperator CA 服务器 — TOTP-gated SSH 证书签发",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="快捷命令: cert-operator  版本: GET /api/version",
     )
     sub = parser.add_subparsers(dest="command", title="子命令")
 
     # init
-    sub.add_parser("init", help="初始化 CA 密钥对和 HTTPS 自签证书")
+    sub.add_parser(
+        "init",
+        help="初始化: 生成 CA 密钥对 + HTTPS 证书 + 客户端 mTLS 证书 + deploy.sh",
+    )
 
     # totp
     p_totp = sub.add_parser("totp", help="配置或管理 TOTP")
@@ -1244,19 +1249,38 @@ def main() -> None:
                          help="用户名（可逗号分隔多个，省略时进入交互模式）")
 
     # groups
-    p_groups = sub.add_parser("groups", help="管理用户组（每组独立 TOTP + 有效期）")
+    _GROUPS_HELP = (
+        "每组拥有独立的 TOTP、有效期、允许用户和扩展配置。\n"
+        "支持父组继承（合并用户 + 覆盖扩展）。\n"
+        "\n"
+        "子命令:\n"
+        "  groups list                             列出所有组\n"
+        "  groups create <组名>                     创建组\n"
+        "  groups delete <组名>                     删除组\n"
+        "  groups users <组名> list                 列出组成员\n"
+        "  groups users <组名> add <用户列表>       添加成员\n"
+        "  groups users <组名> remove <用户列表>    移除成员\n"
+        "  groups totp <组名> set                   为该组生成 TOTP\n"
+        "  groups totp <组名> verify                查看当前验证码\n"
+        "  groups config <组名> [--sudo yes] [--frozen yes]\n"
+        "               [--parent <父组>] [--validity-hours <时>]"
+    )
+    p_groups = sub.add_parser(
+        "groups",
+        help="管理用户组（独立 TOTP + 有效期 + sudo + 父子继承）",
+        description=_GROUPS_HELP,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     p_groups.add_argument("action", choices=["list", "create", "delete", "users", "totp", "config"],
                           nargs="?", default="list",
-                          help="操作: list | create | delete | users | totp | config")
+                          help="操作: list create delete users totp config")
     p_groups.add_argument("group_name", nargs="?", default=None, help="组名")
     p_groups.add_argument("sub_action", nargs="?", default=None,
-                          help="子操作: add | remove | list | set | verify")
+                          help="(users) add remove list  (totp) set verify")
     p_groups.add_argument("sub_user", nargs="?", default=None, help="用户名")
     p_groups.add_argument("--validity-hours", type=float, default=None, help="证书有效期（小时）")
-    p_groups.add_argument("--max-attempts", type=int, default=None, help="限速次数")
-    p_groups.add_argument("--window-seconds", type=int, default=None, help="限速窗口（秒）")
-    p_groups.add_argument("--parent", type=str, default=None, help="父组名（继承其 allowed_users 和配置）")
-    p_groups.add_argument("--sudo", type=str, default=None, help="证书签入 sudo 扩展（如 --sudo yes）")
+    p_groups.add_argument("--parent", type=str, default=None, help="父组名")
+    p_groups.add_argument("--sudo", type=str, default=None, help="sudo 扩展（yes/no）")
     p_groups.add_argument("--frozen", type=str, default=None, help="冻结组（yes/no）")
 
     args = parser.parse_args()
