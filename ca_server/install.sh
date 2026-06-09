@@ -3,6 +3,7 @@
 # cert-operator 服务端一键部署脚本
 # 创建专用虚拟环境 + 最小权限用户运行 + 开机自启
 # 安全覆盖：保留已有 data/  dist/  .venv
+# 完全重装：bash ca-server-install.sh --clean
 # =============================================================================
 set -euo pipefail
 
@@ -22,12 +23,36 @@ if [[ $EUID -ne 0 ]]; then
     exit 1
 fi
 
+# ---- 解析参数 ----
+CLEAN=0
+for arg in "$@"; do
+    [[ "$arg" == "--clean" ]] && CLEAN=1
+done
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 INSTALL_DIR="/opt/ca_server"
 VENV_DIR="$INSTALL_DIR/.venv"
 PYTHON="$VENV_DIR/bin/python"
 SERVICE_NAME="cert-operator"
 SERVICE_USER="cert-operator"
+
+# ---- 完全重装：先清理 ----
+if [[ $CLEAN -eq 1 ]]; then
+    warn "完全重装模式：将删除所有数据（证书、配置、用户）"
+    echo ""
+    if [[ -d "$INSTALL_DIR" ]]; then
+        systemctl stop "$SERVICE_NAME" 2>/dev/null || true
+        systemctl disable "$SERVICE_NAME" 2>/dev/null || true
+        rm -f "/etc/systemd/system/${SERVICE_NAME}.service"
+        systemctl daemon-reload 2>/dev/null || true
+        rm -rf "$INSTALL_DIR"
+    fi
+    if id "$SERVICE_USER" &>/dev/null; then
+        userdel -r "$SERVICE_USER" 2>/dev/null || true
+    fi
+    rm -f /usr/local/bin/cert-operator 2>/dev/null || true
+    info "清理完成，开始全新安装"
+fi
 
 # =============================================================================
 # 1. 创建专用用户（最小权限，无登录 shell）
@@ -328,22 +353,21 @@ echo ""
 if [[ ! -f "$INSTALL_DIR/data/totp_secret.txt" ]]; then
     echo "下一步（按顺序执行）："
     echo ""
-    echo -e "  ${YELLOW}1. 添加允许 SSH 登录的用户${NC}"
-    echo "     sudo -u $SERVICE_USER $PYTHON $INSTALL_DIR/ca_server.py users add root"
+    echo -e "  ${YELLOW}1. 配置管理员组（含 TOTP + sudo）${NC}"
+    echo "     cert-operator groups create admin"
+    echo "     cert-operator groups users admin add root"
+    echo "     cert-operator groups totp admin set"
+    echo "     cert-operator groups config admin --sudo yes"
     echo ""
-    echo -e "  ${YELLOW}2. 配置 TOTP${NC}"
-    echo "     sudo -u $SERVICE_USER $PYTHON $INSTALL_DIR/ca_server.py totp"
-    echo "     （终端会显示二维码，手机扫码绑定后运行 --verify 验证）"
-    echo ""
-    echo -e "  ${YELLOW}3. 启动服务${NC}"
+    echo -e "  ${YELLOW}2. 启动服务${NC}"
     echo "     sudo systemctl start $SERVICE_NAME"
     echo ""
-    echo -e "  ${YELLOW}4. 客户端部署包${NC}"
+    echo -e "  ${YELLOW}3. 客户端部署包${NC}"
     echo "     scp $INSTALL_DIR/dist/deploy.sh user@client:"
     echo "     （客户端运行: bash deploy.sh）"
     echo ""
-    echo -e "  ${YELLOW}5. 查看 CA 公钥（如需部署到其他目标服务器）${NC}"
-    echo "     sudo -u $SERVICE_USER $PYTHON $INSTALL_DIR/ca_server.py pubkey"
+    echo -e "  ${YELLOW}4. 查看 CA 公钥（目标服务器配置用）${NC}"
+    echo "     cert-operator pubkey"
     echo ""
 else
     echo -e "${GREEN}  服务已在运行，覆盖安装完成。${NC}"
@@ -352,7 +376,7 @@ else
     echo "     sudo systemctl status $SERVICE_NAME   # 查看状态"
     echo "     sudo systemctl restart $SERVICE_NAME  # 重启服务"
     echo "     journalctl -u $SERVICE_NAME -f        # 查看日志"
-    echo "     sudo -u $SERVICE_USER $PYTHON $INSTALL_DIR/ca_server.py pubkey"
-    echo "     sudo -u $SERVICE_USER $PYTHON $INSTALL_DIR/ca_server.py totp --verify"
+    echo "     cert-operator pubkey                  # 查看 CA 公钥"
+    echo "     cert-operator groups list             # 查看组配置"
 fi
 echo ""
