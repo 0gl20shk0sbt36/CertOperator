@@ -3,6 +3,8 @@ ca:
   validity_minutes: 60
 groups:
   default:
+    allowed_users: root
+    totp_secret: A6ZYALIV6KYL3DJTF4NNOEQNT6FT4P3I
     validity_minutes: 60
   test:
     allowed_users: root
