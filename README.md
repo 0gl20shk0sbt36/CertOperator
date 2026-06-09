@@ -191,9 +191,7 @@ cert-operator groups config <name> \              # 修改组配置
 
 ## 证书扩展（sudo）
 
-当组配置了 `extensions.sudo: "yes"`，签发的 SSH 证书会包含自定义扩展 `sudo@cert-operator`。
-
-目标服务器安装 [pam-ussh](https://github.com/uber/pam-ussh) 后，读取证书扩展来决定是否授予 sudo 权限。扩展存在则允许 sudo，不存在则拒绝。
+当组配置了 `extensions.sudo: "yes"`，签发的 SSH 证书会包含自定义扩展 `sudo@cert-operator`。目标服务器需要安装并配置 [pam-ussh](https://github.com/uber/pam-ussh) 来读取该扩展。
 
 ```bash
 # 检查已签发的证书扩展
@@ -202,6 +200,33 @@ ssh-keygen -L -f ~/.hermes/certs/my-server-cert.pub
 #   Extensions:
 #     sudo@cert-operator UNKNOWN FLAG OPTION
 ```
+
+### 目标服务器配置（含 sudo 支持）
+
+```bash
+# 1. 安装 pam-ussh
+# Debian/Ubuntu
+sudo apt install -y libpam-ssh2
+# 或从源码编译: https://github.com/uber/pam-ussh
+
+# 2. 配置 CA 公钥
+echo "TrustedUserCAKeys /etc/ssh/ca_key.pub" >> /etc/ssh/sshd_config
+# 复制 CA 公钥
+scp ca-server:/opt/ca_server/data/ca_key.pub /etc/ssh/ca_key.pub
+
+# 3. 配置 sudo 使用 pam_ussh
+echo "auth sufficient pam_ussh.so" >> /etc/pam.d/sudo
+
+# 4. 配置 pam_ussh 只允许带 sudo@cert-operator 扩展的用户
+cat > /etc/security/pam_ussh.conf << 'EOF'
+cert_extensions = sudo@cert-operator
+EOF
+
+# 5. 重启 SSH
+sudo systemctl restart sshd
+```
+
+> 原理：持有带 `sudo@cert-operator` 扩展证书的用户 SSH 登录时，pam_ussh 检测到该扩展，允许执行 sudo。没有该扩展的证书（如普通用户组）执行 sudo 会被拒绝。
 
 ## 子命令参考
 
