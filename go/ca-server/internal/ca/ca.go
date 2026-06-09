@@ -318,21 +318,15 @@ mkdir -p "$CERT_DIR"
 echo "📦 Deploying client certificates to $CERT_DIR"
 
 # ---- ca-https-cert.pem (644) ----
-cat > "$CERT_DIR/ca-https-cert.pem" << 'CERT_EOF'
-%s
-CERT_EOF
+echo '%s' | base64 -d > "$CERT_DIR/ca-https-cert.pem"
 chmod 644 "$CERT_DIR/ca-https-cert.pem"
 
 # ---- client.cert (644) ----
-cat > "$CERT_DIR/client.cert" << 'CERT_EOF'
-%s
-CERT_EOF
+echo '%s' | base64 -d > "$CERT_DIR/client.cert"
 chmod 644 "$CERT_DIR/client.cert"
 
 # ---- client.key (600) ----
-cat > "$CERT_DIR/client.key" << 'CERT_EOF'
-%s
-CERT_EOF
+echo '%s' | base64 -d > "$CERT_DIR/client.key"
 chmod 600 "$CERT_DIR/client.key"
 
 echo ""
