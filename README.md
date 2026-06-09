@@ -20,24 +20,29 @@
 
 ```
 workspace/
-├── ca_server/               ← CA 服务端
-│   ├── ca_server.py         # 子命令: init | totp | serve | pubkey | users
-│   ├── config.yaml          # 配置（证书有效期、限速、用户等）
-│   ├── requirements.txt     # flask, pyotp, pyyaml (可选 qrcode)
-│   ├── package.sh           # 打包自解压安装脚本
-│   ├── install.sh           # 安装脚本（被 package.sh 嵌入）
-│   └── ca_setup.sh          # 开发环境快速设置
+├── ca_server/                   ← CA 服务端
+│   ├── ca_server.py             # 子命令（含 groups、users、renew-cert 等）
+│   ├── config.yaml              # 配置（证书有效期、组、限速等）
+│   ├── requirements.txt         # flask, pyotp, pyyaml
+│   ├── package.sh               # 打包自解压安装脚本
+│   ├── install.sh               # 安装脚本（被 package.sh 嵌入）
+│   ├── uninstall.sh             # 卸载脚本
+│   └── ca_setup.sh              # 开发环境快速设置
 │
-├── cert-operator/           ← 客户端插件（Hermes 插件格式）
-│   ├── plugin.yaml          # 清单
-│   ├── __init__.py          # register(ctx) 入口
-│   ├── __main__.py          # CLI 入口
-│   ├── tools.py             # OpenAI schema + handler
-│   └── client.py            # get_sub_cert / ssh_with_cert
+├── cert-operator/               ← 调用版（Python 包 + CLI）
+│   ├── __init__.py              # 注册入口
+│   ├── __main__.py              # CLI 入口
+│   ├── client.py                # get_sub_cert / ssh_with_cert
+│   ├── tools.py                 # schema + handler
+│   ├── plugin.yaml
+│   └── pyproject.toml
 │
-├── spotify/                 ← 参考：tools 注册模式
-├── disk-cleanup/            ← 参考：hooks 注册模式
-└── plugins.py               ← PluginContext 完整 API
+├── cert-operator-plugin/        ← 插件版（Hermes 单文件插件）
+│   ├── __init__.py              # 全部逻辑（452 行）
+│   └── plugin.yaml
+│
+├── disk-cleanup/                ← 参考：hooks 注册模式
+└── plugins.py                   ← PluginContext 完整 API
 ```
 
 ## 快速开始
@@ -55,30 +60,31 @@ ssh root@server
 # 国内服务器建议先设置镜像源加速
 export PIP_INDEX_URL=https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple
 bash ca-server-install.sh
-# 自动完成：创建用户 → 解压 → venv → 安装依赖 → init → 开机自启
-#           → 自动配置本机 SSH 信任 CA 公钥（TrustedUserCAKeys）
-#           安装后本机即可用证书 SSH 登录
+# 自动完成：创建用户 → 解压 → venv → 依赖 → init → 开机自启
+#           → 自动配置本机 SSH 信任 CA 公钥
+#           → 安装 cert-operator 快捷命令
 
-# 3. 添加允许 SSH 登录的用户
-sudo -u cert-operator /opt/ca_server/.venv/bin/python \
-    /opt/ca_server/ca_server.py users add root
+# 3. 配置管理员组（含 TOTP + sudo 权限）
+cert-operator groups create admin
+cert-operator groups users admin add root,yyx
+cert-operator groups totp admin set          # 手机扫码绑定
+cert-operator groups config admin --sudo yes # 证书带 sudo 扩展
 
-# 4. 配置 TOTP（手机扫码绑定）
-sudo -u cert-operator /opt/ca_server/.venv/bin/python \
-    /opt/ca_server/ca_server.py totp
+# 4. 配置普通用户组（仅 SSH，无 sudo）
+cert-operator groups create operator
+cert-operator groups users operator add yyx
+cert-operator groups totp operator set
 
 # 5. 开放防火墙（默认端口 8443）
-sudo ufw allow 8443/tcp   # 如果使用 ufw
-# 或: firewall-cmd --add-port=8443/tcp --permanent && firewall-cmd --reload
+sudo ufw allow 8443/tcp
 
 # 6. 启动服务
 sudo systemctl start cert-operator
 
 # 7. 查看 CA 公钥部署到目标服务器的指南
-sudo -u cert-operator /opt/ca_server/.venv/bin/python \
-    /opt/ca_server/ca_server.py pubkey
+cert-operator pubkey
 
-# 7. 客户端部署包
+# 8. 客户端部署包
 scp /opt/ca_server/dist/deploy.sh user@client:~
 # 客户端运行: bash deploy.sh
 ```
@@ -88,126 +94,169 @@ scp /opt/ca_server/dist/deploy.sh user@client:~
 ```bash
 cd ca_server
 
-# 安装依赖
 pip3 install --break-system-packages -r requirements.txt
 pip3 install --break-system-packages "requests>=2.31"
 
-# 1. 初始化
-python3 ca_server.py init
-
-# 2. 添加允许用户
-python3 ca_server.py users add root
-
-# 3. 配置 TOTP
-python3 ca_server.py totp
-
-# 4. 开放防火墙
-sudo ufw allow 8443/tcp   # 默认端口 8443
-
-# 5. 启动服务（mTLS 双向验证）
-python3 ca_server.py serve
-
-# 6. 查看 CA 公钥部署指南
-python3 ca_server.py pubkey
+python3 ca_server.py init                          # 初始化
+python3 ca_server.py groups create default         # 创建默认组
+python3 ca_server.py groups users default add root # 添加用户
+python3 ca_server.py totp                          # 配置全局 TOTP
+python3 ca_server.py serve                         # 启动 mTLS 服务
 ```
 
-### 客户端安装与使用（你日常操作的电脑）
-
-cert-operator 客户端是你日常使用的电脑（笔记本、开发机）。通过它向 CA 服务器申请短期 SSH 证书，然后登录目标服务器。
+### 客户端安装与使用
 
 #### 安装方式
 
-根据你的环境选择一种：
-
 **方式一：Hermes 插件（推荐）**
 
-将 `cert-operator/` 目录复制到 Hermes 用户插件目录：
-
 ```bash
-cp -r cert-operator ~/.hermes/plugins/cert-operator
+cp -r cert-operator-plugin ~/.hermes/plugins/cert-operator-plugin
+bash ~/deploy.sh   # 部署客户端证书
 ```
 
-然后从服务器部署客户端证书（一次性）：
+**方式二：独立 CLI**
 
 ```bash
-scp root@ca-server:/opt/ca_server/dist/deploy.sh ~
-bash ~/deploy.sh
+pip install requests
+python3 -m cert-operator get-cert https://server:8443 123456 prod-server
 ```
 
-Hermes 重启后自动加载 `get_sub_cert` 和 `ssh_with_cert` 两个工具。
-验证：`ls ~/.hermes/plugins/cert-operator/plugin.yaml && grep -r "cert-operator" ~/.hermes/logs/agent.log`
-
-**方式二：Python 包**
+**方式三：Python 包**
 
 ```bash
 pip install -e /workspace/cert-operator
-# 或复制到项目内：cp -r cert-operator /your-project/
-```
-
-导入使用：
-
-```python
-from cert_operator.client import get_sub_cert, ssh_with_cert
-```
-
-**方式三：独立 CLI（无需安装）**
-
-```bash
-# 直接运行，只需 requests 库
-python3 -m cert-operator get-cert https://ca-server:8443 123456 prod-server
+from cert_operator.client import get_sub_cert
 ```
 
 #### 基本用法
 
 ```bash
 # 获取证书
-python3 -m cert-operator get-cert https://ca-server:8443 123456 prod-server
+python3 -m cert-operator get-cert https://server:8443 123456 prod-server
 
-# 登录服务器
-python3 -m cert-operator ssh prod-server.example.com root ~/.hermes/certs/prod-server
+# 指定用户和组
+python3 -m cert-operator get-cert https://server:8443 123456 prod-server \
+    --user root --group admin
 
-# 或者直接使用 SSH（证书自动发现）
-ssh -i ~/.hermes/certs/prod-server user@target-server
+# SSH 登录
+python3 -m cert-operator ssh server.example.com root ~/.hermes/certs/prod-server
+```
+
+## 用户组管理
+
+### 组概念
+
+每组拥有独立的配置（TOTP Secret、证书有效期、允许用户、sudo 权限）。
+
+**层级继承**：组可以设置 `parent`，子组自动继承父组的 `allowed_users`（合并）、`extensions`（合并覆盖），其余字段子组覆盖父组。
+
+```yaml
+groups:
+  operator:
+    allowed_users: "yyx"
+    validity_hours: 1
+    totp_secret: "xxx"
+    parent: ""
+    extensions: {}
+
+  admin:
+    parent: "operator"           # 继承 operator 的用户
+    validity_hours: 0.166        # 覆盖：10 分钟
+    extensions:
+      sudo: "yes"               # 证书包含 sudo@cert-operator 扩展
+```
+
+### 命令参考
+
+```bash
+cert-operator groups list                         # 列出所有组
+cert-operator groups create <name>                # 创建组
+cert-operator groups delete <name>                # 删除组
+
+cert-operator groups users <name> add <user>      # 添加组成员
+cert-operator groups users <name> remove <user>   # 移除组成员
+cert-operator groups users <name> list            # 列出组成员
+
+cert-operator groups totp <name> set              # 配置组 TOTP
+cert-operator groups totp <name> verify           # 查看当前验证码
+
+cert-operator groups config <name>                # 查看组配置
+cert-operator groups config <name> \              # 修改组配置
+    --parent operator \                            #  设置父组
+    --validity-hours 0.166 \                      #  设置有效期
+    --sudo yes                                    #  开启 sudo 扩展
+```
+
+## 证书扩展（sudo）
+
+当组配置了 `extensions.sudo: "yes"`，签发的 SSH 证书会包含自定义扩展 `sudo@cert-operator`。
+
+目标服务器安装 [pam-ussh](https://github.com/uber/pam-ussh) 后，读取证书扩展来决定是否授予 sudo 权限。扩展存在则允许 sudo，不存在则拒绝。
+
+```bash
+# 检查已签发的证书扩展
+ssh-keygen -L -f ~/.hermes/certs/my-server-cert.pub
+# 输出示例：
+#   Extensions:
+#     sudo@cert-operator UNKNOWN FLAG OPTION
 ```
 
 ## 子命令参考
 
-### ca_server.py
+### ca_server.py（快捷命令: cert-operator）
 
 | 命令 | 作用 |
 |------|------|
-| `init` | 初始化 CA 密钥、HTTPS 证书、客户端 mTLS 证书、deploy.sh |
-| `totp` | 配置 TOTP（终端二维码 + PNG 保存） |
-| `totp --verify` | 显示当前验证码，与手机对比 |
-| `totp --regenerate` | 重新生成 Secret |
+| `init` | 初始化 CA 密钥、HTTPS 证书、mTLS 客户端证书 |
+| `renew-cert` | 重新生成 HTTPS 证书（更新 SAN，不碰 CA 密钥） |
 | `serve` | 启动 mTLS HTTPS 服务 |
 | `serve --no-mtls` | 禁用 mTLS，仅单向 HTTPS |
 | `serve --port 8443` | 指定端口（默认 8443） |
+| `users add <user>` | 添加 default 组的允许用户 |
+| `groups list` | 列出所有组 |
+| `groups create <name>` | 创建组 |
+| `groups delete <name>` | 删除组 |
+| `groups users <name> add <user>` | 添加组成员 |
+| `groups totp <name> set` | 配置组 TOTP |
+| `groups config <name>` | 修改组配置（--sudo / --parent / --validity-hours） |
+| `totp` | 配置 default 组 TOTP |
+| `totp --verify` | 显示当前验证码 |
 | `pubkey` | 显示 CA 公钥 + 目标服务器部署命令 |
-| `users list` | 列出当前允许的 SSH 登录用户 |
-| `users add <user>` | 添加允许用户（逗号分隔多个，检查系统用户是否存在） |
-| `users add` | 交互式选择本地系统用户 |
-| `users remove <user>` | 移除允许用户 |
-| `users set <user1,user2>` | 覆盖设置允许用户列表（传空字符串清空） |
+| `renew-cert` | 重新生成 HTTPS 证书 |
 
 ### 插件工具
 
 | 工具 | 作用 |
 |------|------|
-| `get_sub_cert` | 通过 TOTP + mTLS 获取 SSH 子证书 |
+| `get_sub_cert` | 通过 TOTP + mTLS 获取 SSH 子证书（支持 group、user 参数） |
 | `ssh_with_cert` | 使用 SSH 证书登录目标服务器 |
+
+## API 参考
+
+### POST /api/get-cert
+
+```json
+{ "totp": "123456", "group": "admin", "user": "root" }
+```
+
+| 参数 | 必填 | 说明 |
+|------|------|------|
+| `totp` | 是 | 6 位 TOTP 一次性验证码 |
+| `group` | 否 | 组名（不传则用 default 组） |
+| `user` | 否 | 登录用户名（不传则证书包含组内所有允许用户） |
+
+### GET /api/info
+
+返回服务器信息，包括 `groups` 中每个组的配置概要和 TOTP 是否已配置。
 
 ## 安全设计
 
-- **mTLS 传输层**：非授权客户端在 TLS 握手阶段即被拒绝
-- **TOTP 应用层**：所有证书签发必须通过 TOTP 验证
-- **Rate Limit**：5 次 / 300 秒，防止暴力破解
-- **主机密钥验证**：`StrictHostKeyChecking=yes`，持久化 `known_hosts`
-- **证书短期有效**：默认 1 小时，通过 `config.yaml` 可配置
+- **mTLS 传输层**：非授权客户端 TLS 握手阶段被拒绝
+- **TOTP 应用层**：每个组独立 TOTP，证书签发需验证
+- **Rate Limit**：5 次 / 300 秒，防暴力破解
+- **用户隔离**：不同组可签不同用户，指定 user 只签单用户
+- **sudo 控制**：证书扩展区分普通/管理员权限
+- **主机密钥验证**：`StrictHostKeyChecking=accept-new`，持久化 `known_hosts`
+- **证书短期有效**：默认 1 小时，每组可独立配置
 - **零密钥存储**：服务端签发后立即删除临时密钥对
-
-## 环境要求
-
-- Python 3.11+
-- OpenSSL（服务端 `init` 需要）
-- 依赖安装：`pip3 install --break-system-packages -r ca_server/requirements.txt`
