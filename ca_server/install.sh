@@ -39,19 +39,8 @@ SERVICE_USER="cert-operator"
 # ---- 完全重装：先清理 ----
 if [[ $CLEAN -eq 1 ]]; then
     warn "完全重装模式：将删除所有数据（证书、配置、用户）"
-    echo ""
-    if [[ -d "$INSTALL_DIR" ]]; then
-        systemctl stop "$SERVICE_NAME" 2>/dev/null || true
-        systemctl disable "$SERVICE_NAME" 2>/dev/null || true
-        rm -f "/etc/systemd/system/${SERVICE_NAME}.service"
-        systemctl daemon-reload 2>/dev/null || true
-        rm -rf "$INSTALL_DIR"
-    fi
-    if id "$SERVICE_USER" &>/dev/null; then
-        userdel -r "$SERVICE_USER" 2>/dev/null || true
-    fi
-    rm -f /usr/local/bin/cert-operator 2>/dev/null || true
-    info "清理完成，开始全新安装"
+    # 移除旧安装数据目录，确保后续解压到空目录
+    rm -rf "$INSTALL_DIR/data" "$INSTALL_DIR/dist" "$INSTALL_DIR/.venv" 2>/dev/null || true
 fi
 
 # =============================================================================
@@ -103,6 +92,14 @@ else
     mkdir -p "$INSTALL_DIR"
     cp -r "$SCRIPT_DIR"/* "$INSTALL_DIR/"
     rm -rf "$INSTALL_DIR"/__pycache__ "$INSTALL_DIR"/.venv
+fi
+
+# 清理模式：调用 uninstall.sh 卸载旧安装
+if [[ $CLEAN -eq 1 ]] && [[ -f "$INSTALL_DIR/uninstall.sh" ]]; then
+    info "清理旧安装（保留已解压的源码）..."
+    bash "$INSTALL_DIR/uninstall.sh" --yes --keep-files
+    rm -f /usr/local/bin/cert-operator 2>/dev/null || true
+    info "旧安装已清理"
 fi
 
 # 恢复 data/、config.yaml、dist/

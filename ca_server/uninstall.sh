@@ -24,21 +24,31 @@ INSTALL_DIR="/opt/ca_server"
 SERVICE_NAME="cert-operator"
 SERVICE_USER="cert-operator"
 
-echo ""
-echo "============================================================"
-echo -e "${RED}  卸载 cert-operator CA 服务器${NC}"
-echo "============================================================"
-echo ""
-echo "将执行以下操作："
-echo "  - 停止并禁用 $SERVICE_NAME 服务"
-echo "  - 删除 /etc/systemd/system/${SERVICE_NAME}.service"
-echo "  - 删除 $INSTALL_DIR"
-echo "  - 删除系统用户 $SERVICE_USER"
-echo ""
-read -r -p "确认卸载？(y/N): " confirm
-if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
-    info "已取消"
-    exit 0
+# --yes 参数跳过确认（供 install.sh --clean 调用）
+FORCE=0
+KEEP_FILES=0
+for arg in "$@"; do
+    [[ "$arg" == "--yes" ]] && FORCE=1
+    [[ "$arg" == "--keep-files" ]] && KEEP_FILES=1
+done
+
+if [[ $FORCE -eq 0 ]]; then
+    echo ""
+    echo "============================================================"
+    echo -e "${RED}  卸载 cert-operator CA 服务器${NC}"
+    echo "============================================================"
+    echo ""
+    echo "将执行以下操作："
+    echo "  - 停止并禁用 $SERVICE_NAME 服务"
+    echo "  - 删除 /etc/systemd/system/${SERVICE_NAME}.service"
+    echo "  - 删除 $INSTALL_DIR"
+    echo "  - 删除系统用户 $SERVICE_USER"
+    echo ""
+    read -r -p "确认卸载？(y/N): " confirm
+    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+        info "已取消"
+        exit 0
+    fi
 fi
 
 # ---- 1. 停止并禁用服务 ----
@@ -52,7 +62,7 @@ if systemctl list-unit-files --quiet "$SERVICE_NAME.service" 2>/dev/null; then
 fi
 
 # ---- 2. 删除安装目录 ----
-if [[ -d "$INSTALL_DIR" ]]; then
+if [[ $KEEP_FILES -eq 0 ]] && [[ -d "$INSTALL_DIR" ]]; then
     info "删除 $INSTALL_DIR ..."
     rm -rf "$INSTALL_DIR"
     info "安装目录已删除"
