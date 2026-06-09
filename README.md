@@ -14,7 +14,7 @@
 
 **传输层**：mTLS 双向证书验证 — 客户端持有 `client.cert`，服务端要求 `CERT_REQUIRED`
 **应用层**：TOTP 6 位一次性码 — 限速 5 次/300 秒
-**签名层**：SSH CA 签名 — 证书有效期默认 1 小时，自动过期
+**签名层**：SSH CA 签名 — 证书有效期默认 60 分钟（可配），自动过期
 
 ## 文件结构
 
@@ -155,16 +155,16 @@ python3 -m cert-operator ssh server.example.com root ~/.hermes/certs/prod-server
 groups:
   operator:
     allowed_users: "yyx"
-    validity_hours: 1
+    validity_minutes: 60
     totp_secret: "xxx"
     parent: ""
     extensions: {}
 
   admin:
-    parent: "operator"           # 继承 operator 的用户
-    validity_hours: 0.166        # 覆盖：10 分钟
+    parent: "operator"            # 继承 operator 的用户
+    validity_minutes: 10          # 覆盖：10 分钟
     extensions:
-      sudo: "yes"               # 证书包含 sudo@cert-operator 扩展
+      sudo: "yes"                # 证书包含 sudo@cert-operator 扩展
 ```
 
 ### 命令参考
@@ -181,12 +181,12 @@ cert-operator groups users <name> list            # 列出组成员
 cert-operator groups totp <name> set              # 配置组 TOTP
 cert-operator groups totp <name> verify           # 查看当前验证码
 
-cert-operator groups config <name>                # 查看组配置
-cert-operator groups config <name> \              # 修改组配置
-    --parent operator \                            #  设置父组
-    --validity-hours 0.166 \                      #  设置有效期
-    --sudo yes                                    #  开启 sudo 扩展
-    --frozen yes                                  #  冻结组（停止签发）
+cert-operator groups config <name> get              # 查看组配置
+cert-operator groups config <name> set \            # 修改组配置
+    --parent operator \                              #  设置父组
+    --validity-minutes 10 \                          #  设置有效期（分钟）
+    --sudo yes \                                    #  开启 sudo 扩展
+    --frozen yes                                    #  冻结组（停止签发）
 ```
 
 ## 证书扩展（sudo）
@@ -265,7 +265,8 @@ PAM
 | `groups delete <name>` | 删除组 |
 | `groups users <name> add <user>` | 添加组成员 |
 | `groups totp <name> set` | 配置组 TOTP |
-| `groups config <name>` | 修改组配置（--sudo / --parent / --validity-hours / --frozen） |
+| `groups config <name> get` | 查看组配置 |
+| `groups config <name> set` | 修改组配置（--sudo / --parent / --validity-minutes / --frozen） |
 | `totp` | 配置 default 组 TOTP |
 | `totp --verify` | 显示当前验证码 |
 | `pubkey` | 显示 CA 公钥 + 目标服务器部署命令 |

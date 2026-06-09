@@ -428,7 +428,7 @@ def _cmd_serve(args) -> None:
             sys.exit(1)
 
     key_type = cfg.get("ca", {}).get("key_type", "ed25519")
-    validity_hours = cfg.get("ca", {}).get("validity_hours", 1)
+    validity_minutes = cfg.get("ca", {}).get("validity_minutes", 1)
     max_attempts = cfg.get("rate_limit", {}).get("max_attempts", 5)
     window_seconds = cfg.get("rate_limit", {}).get("window_seconds", 300)
 
@@ -477,7 +477,7 @@ def _cmd_serve(args) -> None:
             return jsonify({"success": False, "error": f"组不存在: {group_name or 'default'}"}), 400
         _users = gcfg.get("allowed_users", "")
         _secret = gcfg.get("totp_secret", "")
-        _validity_hours = gcfg.get("validity_hours", validity_hours)
+        _validity_minutes = gcfg.get("validity_minutes", validity_minutes)
         _frozen = gcfg.get("frozen", False) is True or str(gcfg.get("frozen", "")).lower() in ("yes", "1", "true")
 
         if _frozen:
@@ -515,7 +515,7 @@ def _cmd_serve(args) -> None:
 
         try:
             _extensions = gcfg.get("extensions") or {}
-            result = _issue_cert(key_type, _users, _validity_hours, _extensions)
+            result = _issue_cert(key_type, _users, _validity_minutes, _extensions)
         except Exception as exc:
             return jsonify({"success": False, "error": f"签发失败：{exc}"}), 500
 
@@ -554,7 +554,7 @@ def _cmd_serve(args) -> None:
             if _d == "full":
                 _groups_info[gname] = {
                     "allowed_users": _users,
-                    "validity_hours": _resolved.get("validity_hours", validity_hours),
+                    "validity_minutes": _resolved.get("validity_minutes", validity_minutes),
                     "totp_configured": _has_totp,
                     "frozen": _frozen,
                     "parent": gcfg.get("parent", "") or None,
@@ -573,7 +573,7 @@ def _cmd_serve(args) -> None:
             "ca_public_key": CA_KEY_PUB.read_text().strip() if CA_KEY_PUB.is_file() else None,
         }
         if _d == "full":
-            result["validity_hours"] = validity_hours
+            result["validity_minutes"] = validity_minutes
             result["allowed_users"] = (_dg or {}).get("allowed_users", "")
             result["groups"] = _groups_info
         else:
@@ -587,7 +587,7 @@ def _cmd_serve(args) -> None:
     # ---- Start ----
     print(f"🚀 cert-operator v{VERSION} — CA 服务器启动中...")
     print(f"   地址: https://{host}:{port}")
-    print(f"   证书有效期: {validity_hours}h")
+    print(f"   证书有效期: {validity_minutes} 分钟")
     _dg = _get_group_config(cfg, "default")
     if _dg and _dg.get("allowed_users"):
         print(f"   允许用户: {_dg['allowed_users']}（default 组）")
@@ -614,7 +614,7 @@ def _cmd_serve(args) -> None:
                 threaded=True, debug=debug)
 
 
-def _issue_cert(key_type: str, allowed_users: str, validity_hours: int, extensions: Optional[dict] = None) -> dict:
+def _issue_cert(key_type: str, allowed_users: str, validity_minutes: int, extensions: Optional[dict] = None) -> dict:
     """Generate a temporary key pair, sign with CA, return private key + cert."""
 
     ensure_data_dir()
@@ -634,7 +634,7 @@ def _issue_cert(key_type: str, allowed_users: str, validity_hours: int, extensio
         # 2. CA sign the temporary public key
         cert_path = str(tmp_key) + "-cert.pub"
         identity = f"cert-{serial}"
-        validity = f"+{validity_hours}h"
+        validity = f"+{validity_minutes}m"
 
         cmd = [
             "ssh-keygen", "-s", str(CA_KEY),
@@ -668,7 +668,7 @@ def _issue_cert(key_type: str, allowed_users: str, validity_hours: int, extensio
         ssh_cert = Path(cert_path).read_text()
 
         # 4. Compute expiry
-        expires_dt = datetime.now(timezone.utc) + timedelta(hours=validity_hours)
+        expires_dt = datetime.now(timezone.utc) + timedelta(minutes=validity_minutes)
         expires_at = expires_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
         return {
@@ -709,10 +709,10 @@ def _ensure_default_group(cfg: dict) -> None:
     if global_users and not dg.get("allowed_users"):
         dg["allowed_users"] = global_users
         cfg["groups"]["default"]["allowed_users"] = ""
-    # Migrate validity_hours
-    global_vh = cfg.get("ca", {}).get("validity_hours", 1)
-    if "validity_hours" not in dg:
-        dg["validity_hours"] = global_vh
+    # Migrate validity_minutes
+    global_vh = cfg.get("ca", {}).get("validity_minutes", 1)
+    if "validity_minutes" not in dg:
+        dg["validity_minutes"] = global_vh
     # Migrate totp_secret from file, then purge file
     totp_secret = _read_totp_secret()
     if totp_secret and not dg.get("totp_secret"):
@@ -759,7 +759,7 @@ def _get_group_config(cfg: dict, group_name: str) -> Optional[dict]:
                 continue
             if k in ("allowed_users", "extensions"):
                 continue  # already handled above
-            if v or k in ("validity_hours",):
+            if v or k in ("validity_minutes",):
                 result[k] = v
             elif k not in result:
                 result[k] = v
@@ -1033,7 +1033,7 @@ def _cmd_groups(args) -> None:
         if groups:
             for gname, gcfg in sorted(groups.items()):
                 au = gcfg.get("allowed_users", "")
-                vh = gcfg.get("validity_hours", cfg.get("ca", {}).get("validity_hours", 1))
+                vh = gcfg.get("validity_minutes", cfg.get("ca", {}).get("validity_minutes", 1))
                 parent = gcfg.get("parent", "")
                 print(f"  📁 {gname}{' → ' + parent if parent else ''}")
                 # 有父组时用解析后的配置，否则用原始配置
@@ -1045,7 +1045,7 @@ def _cmd_groups(args) -> None:
                 else:
                     r_exts = gcfg.get("extensions", {})
                     print(f"     允许用户:    {au or '（未设置）'}")
-                print(f"     有效期:      {vh}h")
+                print(f"     有效期:      {vh} 分钟")
                 print(f"     TOTP:        {'✅' if gcfg.get('totp_secret') else '❌'}")
                 if gcfg.get("frozen"):
                     print(f"     ❄ 已冻结")
@@ -1067,7 +1067,7 @@ def _cmd_groups(args) -> None:
             return
         groups[gname] = {
             "allowed_users": "",
-            "validity_hours": 1,
+            "validity_minutes": 60,
             "parent": args.parent or "",
             "extensions": {},
         }
@@ -1166,38 +1166,47 @@ def _cmd_groups(args) -> None:
             return
 
         if args.action == "config":
-            if args.validity_hours is not None:
-                gcfg["validity_hours"] = float(args.validity_hours)
-            if args.max_attempts is not None:
-                gcfg.setdefault("rate_limit", {})["max_attempts"] = int(args.max_attempts)
-            if args.window_seconds is not None:
-                gcfg.setdefault("rate_limit", {})["window_seconds"] = int(args.window_seconds)
-            if args.parent is not None:
-                gcfg["parent"] = args.parent
-            if args.sudo is not None:
-                exts = gcfg.get("extensions") or {}
-                if args.sudo.lower() in ("yes", "true", "1"):
-                    exts["sudo"] = "yes"
-                elif args.sudo.lower() in ("no", "false", "0", ""):
-                    exts.pop("sudo", None)
-                gcfg["extensions"] = exts
-            if args.frozen is not None:
-                if args.frozen.lower() in ("yes", "true", "1"):
-                    gcfg["frozen"] = True
-                elif args.frozen.lower() in ("no", "false", "0", ""):
-                    gcfg["frozen"] = False
-            groups[gname] = gcfg
-            cfg["groups"] = groups
-            save_config(cfg)
-            # Print resolved config
-            resolved = _get_group_config(cfg, gname)
-            print(f"✅ {gname} 配置已更新")
-            if resolved and resolved.get("parent"):
-                src = resolved.get("_resolved_from", "")
-                print(f"   📁 {gname} (上级: {resolved.get('parent')})")
-                print(f"      解析后({src}): {resolved.get('allowed_users') or '（空）'}")
-                if resolved.get("extensions"):
-                    print(f"      extensions: {resolved['extensions']}")
+            if args.sub_action == "get" or args.sub_action is None:
+                # 显示组配置（已解析）
+                resolved = _get_group_config(cfg, gname)
+                if resolved is None:
+                    print(f"❌ 组 {gname} 不存在")
+                    return
+                print(f"📁 {gname} 配置：")
+                print(f"   允许用户:    {resolved.get('allowed_users', '') or '（未设置）'}")
+                print(f"   有效期:      {resolved.get('validity_minutes', 60)} 分钟")
+                print(f"   TOTP:        {'✅ 已配置' if resolved.get('totp_secret') else '❌ 未配置'}")
+                print(f"   冻结:        {'❄ 是' if resolved.get('frozen') else '否'}")
+                exts = resolved.get("extensions", {})
+                print(f"   sudo:        {'✅ 允许' if exts.get('sudo') else '❌ 不允许'}")
+                if resolved.get("parent"):
+                    print(f"   上级组:      {resolved.get('parent')}")
+                return
+
+            if args.sub_action == "set":
+                if args.validity_minutes is not None:
+                    gcfg["validity_minutes"] = int(args.validity_minutes)
+                if args.parent is not None:
+                    gcfg["parent"] = args.parent
+                if args.sudo is not None:
+                    exts = gcfg.get("extensions") or {}
+                    if args.sudo.lower() in ("yes", "true", "1"):
+                        exts["sudo"] = "yes"
+                    elif args.sudo.lower() in ("no", "false", "0", ""):
+                        exts.pop("sudo", None)
+                    gcfg["extensions"] = exts
+                if args.frozen is not None:
+                    if args.frozen.lower() in ("yes", "true", "1"):
+                        gcfg["frozen"] = True
+                    elif args.frozen.lower() in ("no", "false", "0", ""):
+                        gcfg["frozen"] = False
+                groups[gname] = gcfg
+                cfg["groups"] = groups
+                save_config(cfg)
+                print(f"✅ {gname} 配置已更新")
+                return
+
+            print(f"❌ 未知操作: {args.sub_action}，可用 get/set")
             return
 
         return
@@ -1262,8 +1271,9 @@ def main() -> None:
         "  groups users <组名> remove <用户列表>    移除成员\n"
         "  groups totp <组名> set                   为该组生成 TOTP\n"
         "  groups totp <组名> verify                查看当前验证码\n"
-        "  groups config <组名> [--sudo yes] [--frozen yes]\n"
-        "               [--parent <父组>] [--validity-hours <时>]"
+        "  groups config <组名> get                  查看组配置\n"
+        "  groups config <组名> set [--sudo yes] [--frozen yes]\n"
+        "                   [--parent <父组>] [--validity-minutes <分>]"
     )
     p_groups = sub.add_parser(
         "groups",
@@ -1276,9 +1286,9 @@ def main() -> None:
                           help="操作: list create delete users totp config")
     p_groups.add_argument("group_name", nargs="?", default=None, help="组名")
     p_groups.add_argument("sub_action", nargs="?", default=None,
-                          help="(users) add remove list  (totp) set verify")
+                          help="(users) add remove list  (totp) set verify  (config) get set")
     p_groups.add_argument("sub_user", nargs="?", default=None, help="用户名")
-    p_groups.add_argument("--validity-hours", type=float, default=None, help="证书有效期（小时）")
+    p_groups.add_argument("--validity-minutes", type=int, default=None, help="证书有效期（分钟）")
     p_groups.add_argument("--parent", type=str, default=None, help="父组名")
     p_groups.add_argument("--sudo", type=str, default=None, help="sudo 扩展（yes/no）")
     p_groups.add_argument("--frozen", type=str, default=None, help="冻结组（yes/no）")

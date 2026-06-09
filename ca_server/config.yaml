@@ -1,26 +1,15 @@
 ca:
   key_type: ed25519
-  validity_hours: 1
+  validity_minutes: 60
 groups:
-  base-with-sudo:
-    allowed_users: ''
-    extensions:
-      sudo: 'yes'
-    parent: ''
-    validity_hours: 1
-  child-inherit:
-    allowed_users: ''
-    extensions: {}
-    parent: base-with-sudo
-    validity_hours: 1
   default:
-    validity_hours: 1
+    validity_minutes: 60
   test:
     allowed_users: ''
     extensions:
       sudo: 'yes'
     parent: ''
-    validity_hours: 1
+    validity_minutes: 30
 rate_limit:
   max_attempts: 5
   window_seconds: 300
