@@ -1,24 +1,32 @@
-server:
-  host: "0.0.0.0"
-  port: 8443
-  san: ""
-
 ca:
   key_type: ed25519
   validity_hours: 1
-
-totp:
-  issuer: "CertOperator"
-  account: "admin"
-
+groups:
+  admin:
+    allowed_users: root
+    extensions:
+      sudo: 'yes'
+    parent: base-ops
+    validity_hours: 1
+  base-ops:
+    allowed_users: operator,root
+    extensions: {}
+    parent: ''
+    totp_secret: EHBXS5OLS66XGHCFUNEGFJWJASRIQQRR
+    validity_hours: 1
+  default:
+    allowed_users: ''
+    extensions: {}
+    parent: ''
+    totp_secret: ''
+    validity_hours: 1
 rate_limit:
   max_attempts: 5
   window_seconds: 300
-
-groups:
-  default:
-    allowed_users: ""
-    validity_hours: 1
-    totp_secret: ""
-    parent: ""           # 父组名（空=无上级）
-    extensions: {}       # 证书扩展（如 sudo: "yes"），子组覆盖父组
+server:
+  host: 0.0.0.0
+  port: 8443
+  san: ''
+totp:
+  account: admin
+  issuer: CertOperator

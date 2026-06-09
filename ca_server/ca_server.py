@@ -397,6 +397,9 @@ def _cmd_serve(args) -> None:
     """Start the Flask HTTPS API server."""
 
     cfg = load_config()
+    # 迁移旧全局配置到 default 组，必须在预检之前
+    _ensure_default_group(cfg)
+    cfg = load_config()  # re-read after migration
 
     # ---- Validate preconditions ----
     if not CA_KEY.is_file():
@@ -404,11 +407,6 @@ def _cmd_serve(args) -> None:
         sys.exit(1)
     if not HTTPS_KEY.is_file() or not HTTPS_CERT.is_file():
         print(f"❌ HTTPS 证书不存在，请先运行: {_cmd_hint('init')}")
-        sys.exit(1)
-
-    secret = _read_totp_secret()
-    if not secret:
-        print(f"❌ TOTP Secret 未配置，请先运行: {_cmd_hint('totp')}")
         sys.exit(1)
 
     # ---- Server config ----
@@ -429,16 +427,8 @@ def _cmd_serve(args) -> None:
 
     key_type = cfg.get("ca", {}).get("key_type", "ed25519")
     validity_hours = cfg.get("ca", {}).get("validity_hours", 1)
-    allowed_users = cfg.get("ca", {}).get("allowed_users", "")
-
-    if not allowed_users.strip():
-        print("❌ 未配置允许用户，请先运行", _cmd_hint("users add"))
-        sys.exit(1)
-
     max_attempts = cfg.get("rate_limit", {}).get("max_attempts", 5)
     window_seconds = cfg.get("rate_limit", {}).get("window_seconds", 300)
-
-    totp = pyotp.TOTP(secret)
 
     # ---- Rate limiter ----
     rate_lock = threading.Lock()
@@ -559,14 +549,11 @@ def _cmd_serve(args) -> None:
             "ca_public_key": CA_KEY_PUB.read_text().strip() if CA_KEY_PUB.is_file() else None,
         })
 
-    # ---- Startup migration ----
-    _ensure_default_group(_cfg)
-
     # ---- Start ----
     print(f"🚀 CA 服务器启动中...")
     print(f"   地址: https://{host}:{port}")
     print(f"   证书有效期: {validity_hours}h")
-    _dg = _get_group_config(_cfg, "default")
+    _dg = _get_group_config(cfg, "default")
     if _dg and _dg.get("allowed_users"):
         print(f"   允许用户: {_dg['allowed_users']}（default 组）")
     else:
@@ -623,7 +610,21 @@ def _issue_cert(key_type: str, allowed_users: str, validity_hours: int, extensio
         ]
         if extensions:
             for k, v in extensions.items():
-                cmd += ["-O", f"{k}={v}"]
+                opt = k
+                val = str(v) if v else ""
+                # 自动为布尔标记扩展添加 extension: 前缀
+                if ":" not in opt and opt not in (
+                    "clear", "force-command", "source-address", "verify-required",
+                    "no-agent-forwarding", "no-port-forwarding", "no-pty",
+                    "no-user-rc", "no-x11-forwarding", "permit-agent-forwarding",
+                    "permit-port-forwarding", "permit-pty", "permit-user-rc",
+                    "permit-x11-forwarding",
+                ):
+                    opt = f"extension:{opt}@cert-operator"
+                if val and str(val).lower() not in ("", "true", "yes", "1"):
+                    cmd += ["-O", f"{opt}={val}"]
+                else:
+                    cmd += ["-O", opt]
         cmd.append(str(tmp_pub))
         subprocess.run(cmd, check=True, capture_output=True, text=True)
 
@@ -930,7 +931,7 @@ def _cmd_users(args) -> None:
                 print(f"✅ 已设置为: {', '.join(sorted(allowed))}")
             else:
                 print("✅ 已清空允许用户列表")
-            print(f"📋 当前允许用户: {cfg['ca']['allowed_users'] or '（空）'}")
+            print(f"📋 当前允许用户: {cfg['groups']['default'].get('allowed_users', '') or '（空）'}")
             return
 
         if added:
