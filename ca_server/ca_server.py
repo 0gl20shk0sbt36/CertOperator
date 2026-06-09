@@ -980,7 +980,7 @@ def _cmd_users(args) -> None:
                         allowed.discard(items[idx])
             cfg["groups"]["default"]["allowed_users"] = ",".join(sorted(allowed))
             save_config(cfg)
-            print(f"✅ 已更新，当前允许用户: {cfg['ca']['allowed_users'] or '（空）'}")
+            print(f"✅ 已更新，当前允许用户: {cfg['groups']['default'].get('allowed_users', '') or '（空）'}")
         return
 
 
