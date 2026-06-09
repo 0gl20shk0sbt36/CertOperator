@@ -226,11 +226,10 @@ scp ca-server:/opt/ca_server/cert-sudo-check /usr/local/bin/cert-sudo-check
 chmod +x /usr/local/bin/cert-sudo-check
 
 # 4. 配置 sudo 使用 pam_exec 调用该脚本
-#    有证书+含 sudo 扩展 → 放行
-#    有证书+不含 sudo 扩展 → 拒绝
-#    无 Agent/无证书 → 跳转到密码认证
+#    有 sudo 扩展 → 直接 sudo（不输密码）
+#    无扩展/无证书/非我们 CA 签发 → 降级到密码 sudo
 cat > /etc/pam.d/sudo << 'PAM'
-auth [success=ok auth_err=die default=ignore] pam_exec.so /usr/local/bin/cert-sudo-check
+auth sufficient pam_exec.so /usr/local/bin/cert-sudo-check
 auth sufficient pam_unix.so
 PAM
 
