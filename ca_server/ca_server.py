@@ -518,7 +518,8 @@ def _cmd_serve(args) -> None:
             return jsonify({"success": False, "error": "TOTP 验证失败"}), 401
 
         try:
-            result = _issue_cert(key_type, _users, _validity_hours)
+            _extensions = gcfg.get("extensions") or {}
+            result = _issue_cert(key_type, _users, _validity_hours, _extensions)
         except Exception as exc:
             return jsonify({"success": False, "error": f"签发失败：{exc}"}), 500
 
@@ -591,7 +592,7 @@ def _cmd_serve(args) -> None:
                 threaded=True, debug=debug)
 
 
-def _issue_cert(key_type: str, allowed_users: str, validity_hours: int) -> dict:
+def _issue_cert(key_type: str, allowed_users: str, validity_hours: int, extensions: Optional[dict] = None) -> dict:
     """Generate a temporary key pair, sign with CA, return private key + cert."""
 
     ensure_data_dir()
@@ -613,17 +614,18 @@ def _issue_cert(key_type: str, allowed_users: str, validity_hours: int) -> dict:
         identity = f"cert-{serial}"
         validity = f"+{validity_hours}h"
 
-        subprocess.run(
-            [
-                "ssh-keygen", "-s", str(CA_KEY),
-                "-I", identity,
-                "-n", allowed_users,
-                "-V", validity,
-                "-z", str(serial),
-                str(tmp_pub),
-            ],
-            check=True, capture_output=True, text=True,
-        )
+        cmd = [
+            "ssh-keygen", "-s", str(CA_KEY),
+            "-I", identity,
+            "-n", allowed_users,
+            "-V", validity,
+            "-z", str(serial),
+        ]
+        if extensions:
+            for k, v in extensions.items():
+                cmd += ["-O", f"{k}={v}"]
+        cmd.append(str(tmp_pub))
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
 
         # 3. Read results
         ssh_private_key = tmp_key.read_text()
@@ -686,10 +688,55 @@ def _ensure_default_group(cfg: dict) -> None:
 
 
 def _get_group_config(cfg: dict, group_name: str) -> Optional[dict]:
-    """Resolve group config.  Empty *group_name* uses ``default``."""
-    groups = cfg.get("groups", {}) or {}
+    """Resolve group config with parent inheritance.
+
+    Empty *group_name* uses ``default``.  If the group has a ``parent``
+    the returned dict is a **deep-merge** of ancestor configs:
+    child keys override parent keys, except ``allowed_users`` which is
+    **merged** (union of parent + child), and ``extensions`` which is a
+    shallow dict merge (child keys win).
+    """
+    groups: dict = cfg.get("groups", {}) or {}
     name = group_name or "default"
-    return groups.get(name)
+    gcfg = groups.get(name)
+    if gcfg is None:
+        return None
+
+    def _merge_into(child: dict, parent_name: str) -> dict:
+        parent = groups.get(parent_name)
+        if parent is None:
+            return child
+        # Recursively resolve parent's parent
+        base = _merge_into(dict(parent), parent.get("parent", ""))
+        result = dict(base)
+        # allowed_users: union
+        base_users = set(u.strip() for u in base.get("allowed_users", "").replace(",", " ").split() if u.strip())
+        child_users = set(u.strip() for u in child.get("allowed_users", "").replace(",", " ").split() if u.strip())
+        result["allowed_users"] = ",".join(sorted(base_users | child_users))
+        # extensions: shallow merge, child wins
+        merged_ext = dict(base.get("extensions") or {})
+        merged_ext.update(child.get("extensions") or {})
+        result["extensions"] = merged_ext
+        # Other keys: child overrides base
+        for k, v in child.items():
+            if k == "parent":
+                continue
+            if k in ("allowed_users", "extensions"):
+                continue  # already handled above
+            if v or k in ("validity_hours",):
+                result[k] = v
+            elif k not in result:
+                result[k] = v
+        return result
+
+    parent = gcfg.get("parent", "")
+    if parent:
+        merged = _merge_into(dict(gcfg), parent)
+        # Keep the original group name in the result for error messages
+        merged["_resolved_from"] = f"{name} → {parent}"
+        return merged
+    else:
+        return gcfg
 
 
 # ---------------------------------------------------------------------------
@@ -951,10 +998,19 @@ def _cmd_groups(args) -> None:
             for gname, gcfg in sorted(groups.items()):
                 au = gcfg.get("allowed_users", "")
                 vh = gcfg.get("validity_hours", cfg.get("ca", {}).get("validity_hours", 1))
-                print(f"  📁 {gname}")
-                print(f"     允许用户: {au or '（未设置）'}")
-                print(f"     有效期:   {vh}h")
-                print(f"     TOTP:     {'✅' if gcfg.get('totp_secret') or groups[gname].get('totp_secret') else '❌'}")
+                parent = gcfg.get("parent", "")
+                exts = gcfg.get("extensions", {})
+                print(f"  📁 {gname}{' → ' + parent if parent else ''}")
+                if parent:
+                    resolved = _get_group_config(cfg, gname)
+                    r_au = resolved.get("allowed_users", "") if resolved else ""
+                    print(f"     继承后用户: {r_au or '（空）'}")
+                else:
+                    print(f"     允许用户:    {au or '（未设置）'}")
+                print(f"     有效期:      {vh}h")
+                print(f"     TOTP:        {'✅' if gcfg.get('totp_secret') else '❌'}")
+                if exts:
+                    print(f"     extensions:  {exts}")
         else:
             print("  （无）")
         return
@@ -967,7 +1023,12 @@ def _cmd_groups(args) -> None:
         if gname in groups:
             print(f"❌ 组 {gname} 已存在")
             return
-        groups[gname] = {"allowed_users": "", "validity_hours": 1}
+        groups[gname] = {
+            "allowed_users": "",
+            "validity_hours": 1,
+            "parent": args.parent or "",
+            "extensions": {},
+        }
         cfg["groups"] = groups
         save_config(cfg)
         print(f"✅ 组 {gname} 已创建")
@@ -1063,17 +1124,33 @@ def _cmd_groups(args) -> None:
             return
 
         if args.action == "config":
-            # 设置有效期、限速等
-            if args.validity_hours:
+            if args.validity_hours is not None:
                 gcfg["validity_hours"] = float(args.validity_hours)
-            if args.max_attempts:
+            if args.max_attempts is not None:
                 gcfg.setdefault("rate_limit", {})["max_attempts"] = int(args.max_attempts)
-            if args.window_seconds:
+            if args.window_seconds is not None:
                 gcfg.setdefault("rate_limit", {})["window_seconds"] = int(args.window_seconds)
+            if args.parent is not None:
+                gcfg["parent"] = args.parent
+            if args.sudo is not None:
+                exts = gcfg.get("extensions") or {}
+                if args.sudo.lower() in ("yes", "true", "1"):
+                    exts["sudo"] = "yes"
+                elif args.sudo.lower() in ("no", "false", "0", ""):
+                    exts.pop("sudo", None)
+                gcfg["extensions"] = exts
             groups[gname] = gcfg
             cfg["groups"] = groups
             save_config(cfg)
+            # Print resolved config
+            resolved = _get_group_config(cfg, gname)
             print(f"✅ {gname} 配置已更新")
+            if resolved and resolved.get("parent"):
+                src = resolved.get("_resolved_from", "")
+                print(f"   📁 {gname} (上级: {resolved.get('parent')})")
+                print(f"      解析后({src}): {resolved.get('allowed_users') or '（空）'}")
+                if resolved.get("extensions"):
+                    print(f"      extensions: {resolved['extensions']}")
             return
 
         return
@@ -1131,6 +1208,8 @@ def main() -> None:
     p_groups.add_argument("--validity-hours", type=float, default=None, help="证书有效期（小时）")
     p_groups.add_argument("--max-attempts", type=int, default=None, help="限速次数")
     p_groups.add_argument("--window-seconds", type=int, default=None, help="限速窗口（秒）")
+    p_groups.add_argument("--parent", type=str, default=None, help="父组名（继承其 allowed_users 和配置）")
+    p_groups.add_argument("--sudo", type=str, default=None, help="证书签入 sudo 扩展（如 --sudo yes）")
 
     args = parser.parse_args()
 

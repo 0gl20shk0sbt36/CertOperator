@@ -20,3 +20,5 @@ groups:
     allowed_users: ""
     validity_hours: 1
     totp_secret: ""
+    parent: ""           # 父组名（空=无上级）
+    extensions: {}       # 证书扩展（如 sudo: "yes"），子组覆盖父组
