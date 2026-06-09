@@ -551,9 +551,10 @@ def _cmd_serve(args) -> None:
                     "extensions": _resolved.get("extensions", {}),
                 }
             else:
-                # basic: 只暴露可用的组（已配 TOTP）
+                # basic: 可用的组 + 允许用户列表
                 _groups_info[gname] = {
                     "status": "ready" if _has_totp and _users.strip() else "incomplete",
+                    "allowed_users": _users,
                 }
 
         result = {
