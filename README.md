@@ -209,20 +209,21 @@ ssh-keygen -L -f ~/.hermes/certs/my-server-cert.pub
 sudo apt install -y libpam-ssh2
 # 或从源码编译: https://github.com/uber/pam-ussh
 
-# 2. 配置 CA 公钥
-echo "TrustedUserCAKeys /etc/ssh/ca_key.pub" >> /etc/ssh/sshd_config
-# 复制 CA 公钥
+# 2. 从 CA 服务器复制公钥到本机
 scp ca-server:/opt/ca_server/data/ca_key.pub /etc/ssh/ca_key.pub
 
-# 3. 配置 sudo 使用 pam_ussh
+# 3. 配置 sshd 信任该公钥
+echo "TrustedUserCAKeys /etc/ssh/ca_key.pub" >> /etc/ssh/sshd_config
+
+# 4. 配置 sudo 使用 pam_ussh
 echo "auth sufficient pam_ussh.so" >> /etc/pam.d/sudo
 
-# 4. 配置 pam_ussh 只允许带 sudo@cert-operator 扩展的用户
+# 5. 配置 pam_ussh 只允许带 sudo@cert-operator 扩展的用户
 cat > /etc/security/pam_ussh.conf << 'EOF'
 cert_extensions = sudo@cert-operator
 EOF
 
-# 5. 重启 SSH
+# 6. 重启 SSH
 sudo systemctl restart sshd
 ```
 
