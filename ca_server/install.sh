@@ -121,6 +121,14 @@ fi
 chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR"
 info "文件已就绪，所有权已设置"
 
+# ---- 停服（覆盖安装时避免文件冲突） ----
+_was_running=0
+if systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
+    info "停止 $SERVICE_NAME 服务..."
+    systemctl stop "$SERVICE_NAME" || true
+    _was_running=1
+fi
+
 # =============================================================================
 # 3. 交互式配置（覆盖安装时询问保留策略，首次安装提示填写）
 # =============================================================================
@@ -291,9 +299,9 @@ UNIT
 
 systemctl daemon-reload
 systemctl enable "$SERVICE_NAME"
-if systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
-    info "正在重启服务以应用更新..."
-    systemctl restart "$SERVICE_NAME"
+if [[ $_was_running -eq 1 ]]; then
+    info "启动 $SERVICE_NAME 服务..."
+    systemctl start "$SERVICE_NAME"
 fi
 info "systemd 服务已安装并启用（$SERVICE_FILE）"
 
