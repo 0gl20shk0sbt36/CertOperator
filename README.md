@@ -209,9 +209,12 @@ ssh-keygen -L -f ~/.hermes/certs/my-server-cert.pub
 
 ```bash
 # 1. 从源码安装 pam-ussh（Ubuntu/Debian 没有预编译包）
-sudo apt install -y build-essential libpam-dev libssl-dev
+sudo apt install -y build-essential libpam-dev libssl-dev golang-go
 git clone https://github.com/uber/pam-ussh.git /tmp/pam-ussh
-cd /tmp/pam-ussh && make && sudo make install
+# pam-ussh 的 Makefile 用旧版 go get，新版 Go 需改一行
+cd /tmp/pam-ussh
+sed -i 's|go get |go install |' Makefile
+make && sudo make install
 
 # 2. 复制 CA 公钥到本机
 scp ca-server:/opt/ca_server/data/ca_key.pub /etc/ssh/ca_key.pub
