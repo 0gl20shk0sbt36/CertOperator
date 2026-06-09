@@ -1035,22 +1035,24 @@ def _cmd_groups(args) -> None:
                 au = gcfg.get("allowed_users", "")
                 vh = gcfg.get("validity_hours", cfg.get("ca", {}).get("validity_hours", 1))
                 parent = gcfg.get("parent", "")
-                exts = gcfg.get("extensions", {})
                 print(f"  📁 {gname}{' → ' + parent if parent else ''}")
+                # 有父组时用解析后的配置，否则用原始配置
                 if parent:
-                    resolved = _get_group_config(cfg, gname)
-                    r_au = resolved.get("allowed_users", "") if resolved else ""
+                    resolved = _get_group_config(cfg, gname) or gcfg
+                    r_au = resolved.get("allowed_users", "")
+                    r_exts = resolved.get("extensions", {})
                     print(f"     继承后用户: {r_au or '（空）'}")
                 else:
+                    r_exts = gcfg.get("extensions", {})
                     print(f"     允许用户:    {au or '（未设置）'}")
                 print(f"     有效期:      {vh}h")
                 print(f"     TOTP:        {'✅' if gcfg.get('totp_secret') else '❌'}")
                 if gcfg.get("frozen"):
                     print(f"     ❄ 已冻结")
-                if exts.get("sudo"):
+                if r_exts.get("sudo"):
                     print(f"     sudo:        ✅ 允许")
-                elif exts:
-                    print(f"     extensions:  {exts}")
+                elif r_exts:
+                    print(f"     extensions:  {r_exts}")
         else:
             print("  （无）")
         return
