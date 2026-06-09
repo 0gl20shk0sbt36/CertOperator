@@ -23,6 +23,20 @@ if [[ $EUID -ne 0 ]]; then
     exit 1
 fi
 
+# ---- 检查依赖 ----
+MISSING_DEPS=()
+for dep in python3 openssl curl; do
+    command -v "$dep" &>/dev/null || MISSING_DEPS+=("$dep")
+done
+if [[ ${#MISSING_DEPS[@]} -gt 0 ]]; then
+    err "缺少以下依赖：${MISSING_DEPS[*]}"
+    echo ""
+    echo "请先安装："
+    echo "  apt install -y python3 python3-pip python3-venv openssl curl"
+    echo "  （或对应发行版的包管理器命令）"
+    exit 1
+fi
+
 # ---- 解析参数 ----
 CLEAN=0
 for arg in "$@"; do
@@ -35,6 +49,83 @@ VENV_DIR="$INSTALL_DIR/.venv"
 PYTHON="$VENV_DIR/bin/python"
 SERVICE_NAME="cert-operator"
 SERVICE_USER="cert-operator"
+
+# =============================================================================
+# 回滚机制
+# =============================================================================
+ROLLBACK_DIR=$(mktemp -d)
+ROLLBACK_NEEDED=0
+
+_rollback() {
+    local rc=$?
+    if [[ $ROLLBACK_NEEDED -eq 0 ]]; then
+        rm -rf "$ROLLBACK_DIR" 2>/dev/null || true
+        exit $rc
+    fi
+    echo ""
+    echo -e "${RED}========================================${NC}"
+    echo -e "${RED}[ROLLBACK] 安装过程发生错误 (exit code $rc)，正在回滚...${NC}"
+    echo -e "${RED}========================================${NC}"
+
+    # 1. 恢复 PAM sudo 配置（最关键：配坏了所有用户 sudo 都会坏）
+    if [[ -f "$ROLLBACK_DIR/pam_sudo.backup" ]]; then
+        cp "$ROLLBACK_DIR/pam_sudo.backup" /etc/pam.d/sudo 2>/dev/null || true
+        info "PAM sudo 配置已恢复"
+    fi
+
+    # 2. 恢复 sshd_config
+    if [[ -f "$ROLLBACK_DIR/sshd_config.backup" ]]; then
+        cp "$ROLLBACK_DIR/sshd_config.backup" /etc/ssh/sshd_config 2>/dev/null || true
+        info "sshd_config 已恢复"
+        if command -v sshd &>/dev/null; then
+            sshd -t 2>/dev/null && (systemctl restart sshd 2>/dev/null || systemctl restart ssh 2>/dev/null || true)
+        fi
+    fi
+
+    # 3. 移除新增的 systemd 服务（安装前不存在的才移除）
+    if [[ -f "$ROLLBACK_DIR/systemd_service.new" ]]; then
+        systemctl stop "$SERVICE_NAME" 2>/dev/null || true
+        rm -f "/etc/systemd/system/${SERVICE_NAME}.service" 2>/dev/null || true
+        systemctl daemon-reload 2>/dev/null || true
+        info "systemd 服务已清理"
+    fi
+
+    # 4. 移除新安装的快捷命令
+    if [[ -f "$ROLLBACK_DIR/cert_operator.new" ]]; then
+        rm -f /usr/local/bin/cert-operator 2>/dev/null || true
+    fi
+
+    # 5. 移除新安装的 cert-sudo-check
+    if [[ -f "$ROLLBACK_DIR/cert_sudo_check.new" ]]; then
+        rm -f /usr/local/bin/cert-sudo-check 2>/dev/null || true
+    fi
+
+    # 6. 恢复 INSTALL_DIR 数据备份
+    if [[ -n "${BACKUP_DATA:-}" ]] && [[ -d "$BACKUP_DATA/data" ]]; then
+        rm -rf "$INSTALL_DIR/data" 2>/dev/null || true
+        cp -r "$BACKUP_DATA/data" "$INSTALL_DIR/data" 2>/dev/null || true
+        chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR/data" 2>/dev/null || true
+        info "CA 数据已恢复"
+    fi
+    if [[ -n "${BACKUP_CONFIG:-}" ]] && [[ -f "$BACKUP_CONFIG" ]]; then
+        cp "$BACKUP_CONFIG" "$INSTALL_DIR/config.yaml" 2>/dev/null || true
+        info "配置已恢复"
+    fi
+    if [[ -n "${BACKUP_DIST:-}" ]] && [[ -d "$BACKUP_DIST/dist" ]]; then
+        rm -rf "$INSTALL_DIR/dist" 2>/dev/null || true
+        cp -r "$BACKUP_DIST/dist" "$INSTALL_DIR" 2>/dev/null || true
+    fi
+
+    # 7. 清理新建的虚拟环境
+    if [[ -f "$ROLLBACK_DIR/venv.new" ]] && [[ -d "$VENV_DIR" ]]; then
+        rm -rf "$VENV_DIR" 2>/dev/null || true
+    fi
+
+    rm -rf "$ROLLBACK_DIR" 2>/dev/null || true
+    echo -e "${RED}[ROLLBACK] 回滚完成，安装已中止 (exit code $rc)${NC}"
+    exit $rc
+}
+trap '_rollback' ERR
 
 # ---- 完全重装：先清理 ----
 if [[ $CLEAN -eq 1 ]]; then
@@ -111,6 +202,7 @@ fi
 if [[ -n "$BACKUP_CONFIG" ]]; then
     cp "$BACKUP_CONFIG" "$INSTALL_DIR/config.yaml"
     rm -f "$BACKUP_CONFIG"
+    BACKUP_CONFIG=""  # 标记已处理，回滚时不再重复恢复
     info "config.yaml 已保留（用户配置未丢失）"
 fi
 if [[ -n "$BACKUP_DIST" ]]; then
@@ -129,6 +221,39 @@ if systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
     _was_running=1
 fi
 
+# ---- 记录修改前的系统状态，用于回滚 ----
+# PAM
+cp /etc/pam.d/sudo "$ROLLBACK_DIR/pam_sudo.backup" 2>/dev/null || true
+# sshd_config
+cp /etc/ssh/sshd_config "$ROLLBACK_DIR/sshd_config.backup" 2>/dev/null || true
+# systemd 服务状态
+if [[ -f "/etc/systemd/system/${SERVICE_NAME}.service" ]]; then
+    touch "$ROLLBACK_DIR/systemd_service.existed"
+else
+    touch "$ROLLBACK_DIR/systemd_service.new"
+fi
+# 快捷命令状态
+if [[ -f /usr/local/bin/cert-operator ]]; then
+    touch "$ROLLBACK_DIR/cert_operator.existed"
+else
+    touch "$ROLLBACK_DIR/cert_operator.new"
+fi
+# cert-sudo-check 状态
+if [[ -f /usr/local/bin/cert-sudo-check ]]; then
+    touch "$ROLLBACK_DIR/cert_sudo_check.existed"
+else
+    touch "$ROLLBACK_DIR/cert_sudo_check.new"
+fi
+# 虚拟环境状态
+if [[ -d "$VENV_DIR" ]]; then
+    touch "$ROLLBACK_DIR/venv.existed"
+else
+    touch "$ROLLBACK_DIR/venv.new"
+fi
+
+ROLLBACK_NEEDED=1
+info "回滚快照已记录"
+
 # =============================================================================
 # 3. 交互式配置（覆盖安装时询问保留策略，首次安装提示填写）
 # =============================================================================
@@ -138,6 +263,9 @@ _is_interactive() {
 }
 
 CONFIG_YAML="$INSTALL_DIR/config.yaml"
+san_result=""
+OLD_SAN=""
+OLD_USERS=""
 
 if _is_interactive; then
     # 3a. 覆盖安装时确认是否保留现有配置
@@ -176,7 +304,6 @@ if _is_interactive; then
     if command -v curl &>/dev/null; then
         PUBLIC_IP=$(curl -s --max-time 3 ifconfig.me 2>/dev/null || curl -s --max-time 3 ip.sb 2>/dev/null || true)
         if [[ -n "$PUBLIC_IP" ]]; then
-            # 去重：如果 hostname -I 已经包含则不再重复
             found=0
             for ip in "${DETECTED_IPS[@]}"; do
                 [[ "$ip" == "$PUBLIC_IP" ]] && { found=1; break; }
@@ -297,8 +424,8 @@ ProtectSystem=full
 WantedBy=multi-user.target
 UNIT
 
-systemctl daemon-reload
-systemctl enable "$SERVICE_NAME"
+systemctl daemon-reload 2>/dev/null || true
+systemctl enable "$SERVICE_NAME" 2>/dev/null || true
 if [[ $_was_running -eq 1 ]]; then
     info "启动 $SERVICE_NAME 服务..."
     systemctl start "$SERVICE_NAME"
@@ -321,20 +448,33 @@ info "快捷命令已安装: cert-operator"
 if [[ -f "$INSTALL_DIR/cert-sudo-check" ]]; then
     cp "$INSTALL_DIR/cert-sudo-check" /usr/local/bin/cert-sudo-check
     chmod +x /usr/local/bin/cert-sudo-check
-    # 配置 PAM（只在首次安装，不覆盖已有配置）
+    # 配置 PAM（遇到已配置则跳过，保证幂等）
     PAM_FILE="/etc/pam.d/sudo"
     if [[ -f "$PAM_FILE" ]]; then
-        if ! grep -q "cert-sudo-check" "$PAM_FILE" 2>/dev/null; then
-            # 新安装：备份后插入
-            cp "$PAM_FILE" "${PAM_FILE}.bak.$(date +%s)"
-            sed -i '1i\# cert-operator: SSH 证书扩展检查（无扩展/无证书时降级到密码 sudo）\nauth sufficient pam_exec.so /usr/local/bin/cert-sudo-check\nauth sufficient pam_unix.so' "$PAM_FILE"
+        if grep -q "cert-sudo-check" "$PAM_FILE" 2>/dev/null; then
+            if grep -q "quiet.*cert-sudo-check" "$PAM_FILE" 2>/dev/null; then
+                :  # 已有 cert-operator 配置且已优化，跳过
+            else
+                # 旧版 cert-operator PAM（无 quiet）→ 升级
+                info "PAM sudo 配置已升级（quiet 模式）"
+                sed -i "s|auth sufficient pam_exec.so /usr/local/bin/cert-sudo-check|auth sufficient pam_exec.so quiet /usr/local/bin/cert-sudo-check|" "$PAM_FILE"
+            fi
+        else
+            # 备份原始文件
+            cp "$PAM_FILE" "${PAM_FILE}.bak.cert-operator.$(date +%s)"
+            # 构建新配置：保留 #%PAM-1.0 在第一行，插入 cert-operator 规则
+            # 注意：PAM 魔数 #%PAM-1.0 必须是文件第一行
+            HEADER=$(head -1 "$PAM_FILE")
+            {
+                echo "$HEADER"
+                echo "# cert-operator: SSH 证书扩展检查（证书含 sudo 扩展免密码，否则降级到密码）"
+                echo "auth sufficient pam_exec.so quiet /usr/local/bin/cert-sudo-check"
+                echo "auth sufficient pam_unix.so"
+                echo "auth requisite  pam_deny.so"
+                tail -n +2 "$PAM_FILE"
+            } > "${PAM_FILE}.new"
+            mv "${PAM_FILE}.new" "$PAM_FILE"
             info "PAM sudo 已配置"
-        elif grep -q "pam_deny.so" "$PAM_FILE" 2>/dev/null; then
-            # 旧版配置（含 pam_deny.so）升级为双层 sufficient
-            cp "$PAM_FILE" "${PAM_FILE}.bak.$(date +%s)"
-            sed -i '/cert-operator/,/pam_permit.so/d' "$PAM_FILE"
-            sed -i '1i\# cert-operator: SSH 证书扩展检查（无扩展/无证书时降级到密码 sudo）\nauth sufficient pam_exec.so /usr/local/bin/cert-sudo-check\nauth sufficient pam_unix.so' "$PAM_FILE"
-            info "PAM sudo 已升级（旧版配置已替换）"
         fi
     fi
 fi
@@ -409,3 +549,8 @@ else
     echo "     cert-operator groups list             # 查看组配置"
 fi
 echo ""
+
+# ---- 成功：清理回滚数据 ----
+rm -rf "$ROLLBACK_DIR" 2>/dev/null || true
+ROLLBACK_NEEDED=0
+exit 0

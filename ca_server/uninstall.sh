@@ -57,7 +57,7 @@ if systemctl list-unit-files --quiet "$SERVICE_NAME.service" 2>/dev/null; then
     systemctl stop "$SERVICE_NAME" 2>/dev/null || true
     systemctl disable "$SERVICE_NAME" 2>/dev/null || true
     rm -f "/etc/systemd/system/${SERVICE_NAME}.service"
-    systemctl daemon-reload
+    systemctl daemon-reload 2>/dev/null || true
     info "服务已清理"
 fi
 
@@ -68,8 +68,8 @@ if [[ $KEEP_FILES -eq 0 ]] && [[ -d "$INSTALL_DIR" ]]; then
     info "安装目录已删除"
 fi
 
-# ---- 3. 删除专用用户 ----
-if id "$SERVICE_USER" &>/dev/null; then
+# ---- 3. 删除专用用户（--keep-files 时保留） ----
+if [[ $KEEP_FILES -eq 0 ]] && id "$SERVICE_USER" &>/dev/null; then
     info "删除系统用户 $SERVICE_USER ..."
     userdel -r "$SERVICE_USER" 2>/dev/null || userdel "$SERVICE_USER" 2>/dev/null || true
     info "用户已删除"
@@ -79,15 +79,16 @@ fi
 PAM_FILE="/etc/pam.d/sudo"
 if [[ -f "$PAM_FILE" ]] && grep -q "cert-sudo-check" "$PAM_FILE" 2>/dev/null; then
     info "清理 PAM sudo 配置..."
-    # 还原备份（如果有）
-    BAK=$(ls -t "${PAM_FILE}.bak."* 2>/dev/null | head -1)
+    # 还原备份（优先找 cert-operator 生成的备份，兼容新旧命名）
+    BAK=$(ls -t "${PAM_FILE}.bak.cert-operator."* "${PAM_FILE}.bak."* 2>/dev/null | head -1)
     if [[ -n "$BAK" ]]; then
         cp "$BAK" "$PAM_FILE"
         info "已从备份恢复: $(basename "$BAK")"
+        rm -f "$BAK"
     else
-        # 无备份则删除 cert-sudo-check 相关的 4 行
-        sed -i '/cert-operator: SSH 证书扩展检查/,/pam_permit.so/d' "$PAM_FILE"
-        info "已移除 cert-sudo-check 配置"
+        # 无备份则删除 cert-operator 插入的 5 行（从注释到 pam_deny.so）
+        sed -i '/^# cert-operator:/,/^auth requisite  pam_deny.so$/d' "$PAM_FILE"
+        info "已移除 cert-operator PAM 配置"
     fi
 fi
 

@@ -40,7 +40,7 @@ import yaml
 # ---------------------------------------------------------------------------
 
 BASE_DIR = Path(__file__).resolve().parent
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 
 DATA_DIR = BASE_DIR / "data"
 CONFIG_PATH = BASE_DIR / "config.yaml"
@@ -1070,7 +1070,7 @@ def _cmd_groups(args) -> None:
         groups[gname] = {
             "allowed_users": "",
             "validity_minutes": 60,
-            "parent": args.parent or "",
+            "parent": "",
             "extensions": {},
         }
         cfg["groups"] = groups

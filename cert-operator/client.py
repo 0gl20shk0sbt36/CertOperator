@@ -83,6 +83,14 @@ def get_sub_cert(
     if not totp_code.isdigit() or len(totp_code) != 6:
         raise CertFetchError(f"TOTP 码格式错误：需要6位数字，收到 {len(totp_code)} 个字符")
 
+    # ---- Validate cert_name (prevent path traversal) ----
+    if not cert_name or "/" in cert_name or "\\" in cert_name:
+        raise CertFetchError("cert_name 不能包含路径分隔符")
+    if cert_name.startswith(".") or cert_name in ("", ".."):
+        raise CertFetchError("cert_name 不能以 . 开头")
+    if any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-." for c in cert_name):
+        raise CertFetchError("cert_name 只能包含字母、数字、-_. 字符")
+
     # ---- Default paths to ~/.hermes/certs/ ----
     certs_dir = Path.home() / ".hermes" / "certs"
     ca_cert_path = ca_cert_path or str(certs_dir / "ca-https-cert.pem")

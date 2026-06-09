@@ -1,6 +1,8 @@
-"""cert-operator plugin — register tools for TOTP-gated SSH certificate ops."""
+"""cert-operator — TOTP-gated SSH certificate client."""
 
 from __future__ import annotations
+
+__version__ = "1.2.0"
 
 from .tools import (
     GET_SUB_CERT_SCHEMA,
