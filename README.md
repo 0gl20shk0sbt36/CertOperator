@@ -227,17 +227,25 @@ git clone https://github.com/uber/pam-ussh.git /tmp/pam-ussh
 cd /tmp/pam-ussh && make && make install
 
 # 4. 配置 sudo 使用 pam_ussh
-#    限制只有 principals 为 root 的证书可执行 sudo
+#    授权策略：证书的 principals 包含 root 才允许 sudo
 cat > /etc/pam.d/sudo << 'PAM'
 auth [success=1 default=ignore] /lib/security/pam_ussh.so ca_file=/etc/ssh/ca_key.pub authorized_principals=root
 auth requisite                  pam_deny.so
 auth required                   pam_permit.so
 PAM
 
-# 5. 确保 SSH Agent Forwarding 开启（客户端 ssh -A）
+# 5. 客户端 SSH 必须开启 Agent Forwarding
+#    pam-ussh 从 SSH Agent 读取证书，没有 Agent 就拒绝 sudo
 ```
 
-> **原理**：pam-ussh 读取 SSH Agent 中的证书，检查证书的 principals 是否包含 `authorized_principals` 中配置的用户（如 `root`）。admin 组签发的证书含 `root` principal，可 sudo；普通用户组签发的证书不含 `root`，sudo 被拒绝。
+> **签发证书时的 principals 策略**：
+>
+> | 组 | 允许用户 | 签发方式 | 证书 principals | 用途 |
+> |-----|---------|---------|----------------|------|
+> | admin | `aibot,root` | 不传 user | `aibot,root` | SSH 以 aibot 登录，sudo 时 pam-ussh 放行 |
+> | aiuser | `aibot` | 不传 user | `aibot` | SSH 以 aibot 登录，sudo 被拒绝 |
+>
+> 关键：admin 组同时包含登录用户（aibot）和 sudo 授权用户（root）。**签发时不要传 `user=root`**，否则证书只有 root principal，无法 SSH 登录。
 >
 > **客户端 SSH 时必须用 `ssh -A`**（Agent Forwarding），否则 pam-ussh 找不到证书。
 
