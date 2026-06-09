@@ -40,6 +40,8 @@ import yaml
 # ---------------------------------------------------------------------------
 
 BASE_DIR = Path(__file__).resolve().parent
+VERSION = "1.0.0"
+
 DATA_DIR = BASE_DIR / "data"
 CONFIG_PATH = BASE_DIR / "config.yaml"
 
@@ -567,6 +569,7 @@ def _cmd_serve(args) -> None:
                 }
 
         result = {
+            "version": VERSION,
             "ca_key_type": key_type,
             "ca_public_key": CA_KEY_PUB.read_text().strip() if CA_KEY_PUB.is_file() else None,
         }
@@ -579,7 +582,7 @@ def _cmd_serve(args) -> None:
         return jsonify(result)
 
     # ---- Start ----
-    print(f"🚀 CA 服务器启动中...")
+    print(f"🚀 cert-operator v{VERSION} — CA 服务器启动中...")
     print(f"   地址: https://{host}:{port}")
     print(f"   证书有效期: {validity_hours}h")
     _dg = _get_group_config(cfg, "default")
