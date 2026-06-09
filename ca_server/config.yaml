@@ -1,34 +1,18 @@
+server:
+  host: "0.0.0.0"
+  port: 8443
+  san: ""
+
 ca:
   key_type: ed25519
   validity_hours: 1
-groups:
-  admin:
-    allowed_users: root
-    extensions:
-      sudo: 'yes'
-    frozen: false
-    parent: default
-    totp_secret: CUTMZVFX2V44KQSAJNX4NBF35CLXT54U
-    validity_hours: 1
-  base-ops:
-    allowed_users: operator,root
-    extensions: {}
-    parent: ''
-    totp_secret: EHBXS5OLS66XGHCFUNEGFJWJASRIQQRR
-    validity_hours: 1
-  default:
-    allowed_users: root
-    extensions: {}
-    parent: ''
-    totp_secret: RKHQKMHHBZJJ7RQJH5MWHIXQKU536ACG
-    validity_hours: 1
+
+totp:
+  issuer: "CertOperator"
+  account: "admin"
+
 rate_limit:
   max_attempts: 5
   window_seconds: 300
-server:
-  host: 0.0.0.0
-  port: 8443
-  san: ''
-totp:
-  account: admin
-  issuer: CertOperator
+
+groups: {}
