@@ -226,11 +226,12 @@ scp ca-server:/opt/ca_server/cert-sudo-check /usr/local/bin/cert-sudo-check
 chmod +x /usr/local/bin/cert-sudo-check
 
 # 4. 配置 sudo 使用 pam_exec 调用该脚本
-#    脚本检查证书扩展是否包含 sudo@cert-operator
+#    有证书+含 sudo 扩展 → 放行
+#    有证书+不含 sudo 扩展 → 拒绝
+#    无 Agent/无证书 → 跳转到密码认证
 cat > /etc/pam.d/sudo << 'PAM'
-auth sufficient pam_exec.so /usr/local/bin/cert-sudo-check
-auth requisite              pam_deny.so
-auth required               pam_permit.so
+auth [success=ok auth_err=die default=ignore] pam_exec.so /usr/local/bin/cert-sudo-check
+auth sufficient pam_unix.so
 PAM
 
 # 5. 客户端 SSH 必须开启 Agent Forwarding

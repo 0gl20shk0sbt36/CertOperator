@@ -75,6 +75,22 @@ if id "$SERVICE_USER" &>/dev/null; then
     info "用户已删除"
 fi
 
+# ---- 4. 清理 PAM sudo 配置 ----
+PAM_FILE="/etc/pam.d/sudo"
+if [[ -f "$PAM_FILE" ]] && grep -q "cert-sudo-check" "$PAM_FILE" 2>/dev/null; then
+    info "清理 PAM sudo 配置..."
+    # 还原备份（如果有）
+    BAK=$(ls -t "${PAM_FILE}.bak."* 2>/dev/null | head -1)
+    if [[ -n "$BAK" ]]; then
+        cp "$BAK" "$PAM_FILE"
+        info "已从备份恢复: $(basename "$BAK")"
+    else
+        # 无备份则删除 cert-sudo-check 相关的 4 行
+        sed -i '/cert-operator: SSH 证书扩展检查/,/pam_permit.so/d' "$PAM_FILE"
+        info "已移除 cert-sudo-check 配置"
+    fi
+fi
+
 echo ""
 echo -e "${GREEN}✅ 卸载完成${NC}"
 echo ""
