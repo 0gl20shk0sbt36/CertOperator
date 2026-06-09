@@ -386,7 +386,7 @@ if [[ ! -f "$INSTALL_DIR/data/totp_secret.txt" ]]; then
     echo "     cert-operator groups create admin"
     echo "     cert-operator groups users admin add root"
     echo "     cert-operator groups totp admin set"
-    echo "     cert-operator groups config admin set --sudo yes"
+    echo "     cert-operator groups config admin set sudo yes"
     echo ""
     echo -e "  ${YELLOW}2. 启动服务${NC}"
     echo "     sudo systemctl start $SERVICE_NAME"

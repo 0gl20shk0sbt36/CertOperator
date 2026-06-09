@@ -5,10 +5,11 @@ groups:
   default:
     validity_minutes: 60
   test:
-    allowed_users: ''
+    allowed_users: root
     extensions:
       sudo: 'yes'
-    parent: ''
+    frozen: true
+    parent: default
     validity_minutes: 30
 rate_limit:
   max_attempts: 5

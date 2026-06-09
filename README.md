@@ -181,12 +181,8 @@ cert-operator groups users <name> list            # 列出组成员
 cert-operator groups totp <name> set              # 配置组 TOTP
 cert-operator groups totp <name> verify           # 查看当前验证码
 
-cert-operator groups config <name> get              # 查看组配置
-cert-operator groups config <name> set \            # 修改组配置
-    --parent operator \                              #  设置父组
-    --validity-minutes 10 \                          #  设置有效期（分钟）
-    --sudo yes \                                    #  开启 sudo 扩展
-    --frozen yes                                    #  冻结组（停止签发）
+cert-operator groups config <name> get [key]         # 查看配置（无key=全部）
+cert-operator groups config <name> set <key> <值>    # 设置一个配置项
 ```
 
 ## 证书扩展（sudo）
@@ -265,8 +261,8 @@ PAM
 | `groups delete <name>` | 删除组 |
 | `groups users <name> add <user>` | 添加组成员 |
 | `groups totp <name> set` | 配置组 TOTP |
-| `groups config <name> get` | 查看组配置 |
-| `groups config <name> set` | 修改组配置（--sudo / --parent / --validity-minutes / --frozen） |
+| `groups config <name> get [key]` | 查看配置项（无key=全部） |
+| `groups config <name> set <key> <val>` | 设置配置项（sudo/frozen/validity-minutes/parent/allowed-users） |
 | `totp` | 配置 default 组 TOTP |
 | `totp --verify` | 显示当前验证码 |
 | `pubkey` | 显示 CA 公钥 + 目标服务器部署命令 |

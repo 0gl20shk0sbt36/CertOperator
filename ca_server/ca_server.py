@@ -770,8 +770,10 @@ def _get_group_config(cfg: dict, group_name: str) -> Optional[dict]:
         merged = _merge_into(dict(gcfg), parent)
         # Keep the original group name in the result for error messages
         merged["_resolved_from"] = f"{name} → {parent}"
+        merged["parent"] = gcfg.get("parent", parent)
         return merged
     else:
+        gcfg = dict(gcfg)
         return gcfg
 
 
@@ -1166,44 +1168,99 @@ def _cmd_groups(args) -> None:
             return
 
         if args.action == "config":
+            resolved = _get_group_config(cfg, gname)
+            if resolved is None:
+                print(f"❌ 组 {gname} 不存在")
+                return
+            r_exts = resolved.get("extensions", {})
+
             if args.sub_action == "get" or args.sub_action is None:
-                # 显示组配置（已解析）
-                resolved = _get_group_config(cfg, gname)
-                if resolved is None:
-                    print(f"❌ 组 {gname} 不存在")
-                    return
-                print(f"📁 {gname} 配置：")
-                print(f"   允许用户:    {resolved.get('allowed_users', '') or '（未设置）'}")
-                print(f"   有效期:      {resolved.get('validity_minutes', 60)} 分钟")
-                print(f"   TOTP:        {'✅ 已配置' if resolved.get('totp_secret') else '❌ 未配置'}")
-                print(f"   冻结:        {'❄ 是' if resolved.get('frozen') else '否'}")
-                exts = resolved.get("extensions", {})
-                print(f"   sudo:        {'✅ 允许' if exts.get('sudo') else '❌ 不允许'}")
-                if resolved.get("parent"):
-                    print(f"   上级组:      {resolved.get('parent')}")
+                key = (args.sub_user or "").strip().lower()
+                def _get(k: str) -> str:
+                    if k == "sudo":
+                        return "yes" if r_exts.get("sudo") else "no"
+                    if k == "frozen":
+                        return "yes" if resolved.get("frozen") else "no"
+                    if k in ("validity-minutes", "validity_minutes"):
+                        return str(resolved.get("validity_minutes", 60))
+                    if k == "parent":
+                        return resolved.get("parent", "")
+                    if k in ("allowed-users", "allowed_users"):
+                        users = resolved.get("allowed_users", "")
+                        return "\n".join(u.strip() for u in users.replace(",", " ").split() if u.strip())
+                    if k == "totp":
+                        return "yes" if resolved.get("totp_secret") else "no"
+                    return ""
+
+                if key:
+                    print(_get(key))
+                else:
+                    # 全部输出
+                    users = resolved.get("allowed_users", "")
+                    user_lines = [u.strip() for u in users.replace(",", " ").split() if u.strip()]
+                    print(f"sudo: {'yes' if r_exts.get('sudo') else 'no'}")
+                    print(f"frozen: {'yes' if resolved.get('frozen') else 'no'}")
+                    print(f"validity-minutes: {resolved.get('validity_minutes', 60)}")
+                    print(f"parent: {resolved.get('parent', '') or '（无）'}")
+                    print(f"totp: {'yes' if resolved.get('totp_secret') else 'no'}")
+                    print(f"allowed-users:")
+                    for u in user_lines:
+                        print(f"  {u}")
                 return
 
             if args.sub_action == "set":
-                if args.validity_minutes is not None:
-                    gcfg["validity_minutes"] = int(args.validity_minutes)
-                if args.parent is not None:
-                    gcfg["parent"] = args.parent
-                if args.sudo is not None:
-                    exts = gcfg.get("extensions") or {}
-                    if args.sudo.lower() in ("yes", "true", "1"):
-                        exts["sudo"] = "yes"
-                    elif args.sudo.lower() in ("no", "false", "0", ""):
-                        exts.pop("sudo", None)
-                    gcfg["extensions"] = exts
-                if args.frozen is not None:
-                    if args.frozen.lower() in ("yes", "true", "1"):
+                key = (args.sub_user or "").strip().lower()
+                val = (args.set_value or "").strip()
+                if not key or not val:
+                    print("❌ 用法: groups config <组名> set <key> <value>")
+                    return
+
+                if key == "sudo":
+                    if val in ("yes", "true", "1"):
+                        gcfg.setdefault("extensions", {})["sudo"] = "yes"
+                    elif val in ("no", "false", "0"):
+                        (gcfg.get("extensions") or {}).pop("sudo", None)
+                    else:
+                        print("❌ sudo 值仅支持 yes/no")
+                        return
+                elif key == "frozen":
+                    if val in ("yes", "true", "1"):
                         gcfg["frozen"] = True
-                    elif args.frozen.lower() in ("no", "false", "0", ""):
+                    elif val in ("no", "false", "0"):
                         gcfg["frozen"] = False
+                    else:
+                        print("❌ frozen 值仅支持 yes/no")
+                        return
+                elif key in ("validity-minutes", "validity_minutes"):
+                    if val.isdigit():
+                        gcfg["validity_minutes"] = int(val)
+                    else:
+                        print("❌ validity-minutes 必须是整数（分钟）")
+                        return
+                elif key == "parent":
+                    if val == "none":
+                        gcfg["parent"] = ""
+                    else:
+                        gcfg["parent"] = val
+                elif key in ("allowed-users", "allowed_users"):
+                    # 直接设置允许用户列表（带检查）
+                    targets = [u.strip() for u in val.replace(",", " ").split() if u.strip()]
+                    not_found = [u for u in targets if not _check_user_exists(u)]
+                    if not_found:
+                        print(f"❌ 用户不存在: {', '.join(not_found)}")
+                        return
+                    gcfg["allowed_users"] = ",".join(targets)
+                elif key == "totp":
+                    print("❌ totp 只能通过 groups totp <组名> set 设置")
+                    return
+                else:
+                    print(f"❌ 未知 key: {key}，可用: sudo frozen validity-minutes parent allowed-users")
+                    return
+
                 groups[gname] = gcfg
                 cfg["groups"] = groups
                 save_config(cfg)
-                print(f"✅ {gname} 配置已更新")
+                print(f"✅ {gname} {key} = {val}")
                 return
 
             print(f"❌ 未知操作: {args.sub_action}，可用 get/set")
@@ -1271,9 +1328,9 @@ def main() -> None:
         "  groups users <组名> remove <用户列表>    移除成员\n"
         "  groups totp <组名> set                   为该组生成 TOTP\n"
         "  groups totp <组名> verify                查看当前验证码\n"
-        "  groups config <组名> get                  查看组配置\n"
-        "  groups config <组名> set [--sudo yes] [--frozen yes]\n"
-        "                   [--parent <父组>] [--validity-minutes <分>]"
+        "  groups config <组名> get [key]             查看配置（无key=全部）\n"
+        "  groups config <组名> set <key> <value>     设置配置项\n"
+        "    key 可选: sudo frozen validity-minutes parent allowed-users"
     )
     p_groups = sub.add_parser(
         "groups",
@@ -1287,11 +1344,8 @@ def main() -> None:
     p_groups.add_argument("group_name", nargs="?", default=None, help="组名")
     p_groups.add_argument("sub_action", nargs="?", default=None,
                           help="(users) add remove list  (totp) set verify  (config) get set")
-    p_groups.add_argument("sub_user", nargs="?", default=None, help="用户名")
-    p_groups.add_argument("--validity-minutes", type=int, default=None, help="证书有效期（分钟）")
-    p_groups.add_argument("--parent", type=str, default=None, help="父组名")
-    p_groups.add_argument("--sudo", type=str, default=None, help="sudo 扩展（yes/no）")
-    p_groups.add_argument("--frozen", type=str, default=None, help="冻结组（yes/no）")
+    p_groups.add_argument("sub_user", nargs="?", default=None, help="用户名 / (config) get的key / set的key")
+    p_groups.add_argument("set_value", nargs="?", default=None, help="(config set) 设置的值")
 
     args = parser.parse_args()
 
