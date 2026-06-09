@@ -40,7 +40,7 @@ import yaml
 # ---------------------------------------------------------------------------
 
 BASE_DIR = Path(__file__).resolve().parent
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 DATA_DIR = BASE_DIR / "data"
 CONFIG_PATH = BASE_DIR / "config.yaml"
