@@ -226,7 +226,7 @@ scp ca-server:/opt/ca_server/cert-sudo-check /usr/local/bin/cert-sudo-check
 chmod +x /usr/local/bin/cert-sudo-check
 
 # 4. 配置 sudo 使用 pam_exec 调用该脚本
-#    脚本检查证书的 principals 是否包含 sudo-access
+#    脚本检查证书扩展是否包含 sudo@cert-operator
 cat > /etc/pam.d/sudo << 'PAM'
 auth sufficient pam_exec.so /usr/local/bin/cert-sudo-check
 auth requisite              pam_deny.so
@@ -241,10 +241,10 @@ PAM
 >
 > | 组 | 允许用户 | 签发方式 | 证书 principals | 用途 |
 > |-----|---------|---------|----------------|------|
-> | admin | `aibot,sudo-access` | 不传 user | `aibot,sudo-access` | SSH 以 aibot 登录，sudo 时 cert-sudo-check 放行 |
-> | aiuser | `aibot` | 不传 user | `aibot` | SSH 以 aibot 登录，sudo 被拒绝 |
+> | admin | `aibot` | --sudo yes | `aibot` + sudo@cert-operator 扩展 | SSH 以 aibot 登录，sudo 放行 |
+> | aiuser | `aibot` | 不配置 sudo | `aibot` | SSH 以 aibot 登录，sudo 被拒绝 |
 >
-> `sudo-access` 不是真实系统用户，只是证书里的一个标记位，不映射到任何账号。
+> 控制 sudo 权限的是证书扩展 `sudo@cert-operator`，不是 principal。admin 组的 `groups config --sudo yes` 会自动将该扩展写入证书。
 >
 > **客户端 SSH 时必须用 `ssh -A`**（Agent Forwarding），否则 cert-sudo-check 无法读取证书。
 

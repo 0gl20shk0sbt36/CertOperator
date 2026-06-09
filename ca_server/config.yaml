@@ -13,6 +13,8 @@ groups:
     extensions: {}
     parent: base-with-sudo
     validity_hours: 1
+  default:
+    validity_hours: 1
   test:
     allowed_users: ''
     extensions:

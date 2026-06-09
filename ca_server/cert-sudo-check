@@ -7,7 +7,7 @@ set -euo pipefail
 
 # ---- 配置（可通过环境变量覆盖） ----
 CA_PUB_FILE="${CERT_SUDO_CA:-/opt/ca_server/data/ca_key.pub}"
-ALLOWED_PRINCIPAL="${CERT_SUDO_PRINCIPAL:-sudo-access}"
+SUDO_EXT="${CERT_SUDO_EXT:-sudo@cert-operator}"
 
 # ---- 检查 SSH Agent ----
 if [[ -z "${SSH_AUTH_SOCK:-}" ]]; then
@@ -43,9 +43,9 @@ while IFS= read -r line; do
         continue  # 不是我们签发的证书，跳过
     fi
 
-    # 检查 principal 是否包含 sudo-access
-    if echo "$INFO" | grep -q "Principals:.*$ALLOWED_PRINCIPAL"; then
-        exit 0  # ✅ 有 sudo-access → 允许 sudo
+    # 检查证书扩展是否包含 sudo@cert-operator
+    if echo "$INFO" | grep -q "$SUDO_EXT"; then
+        exit 0  # ✅ 有 sudo@cert-operator 扩展 → 允许 sudo
     fi
 done <<< "$CERT_DATA"
 
