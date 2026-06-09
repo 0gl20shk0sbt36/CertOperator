@@ -8,7 +8,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CA_SERVER_DIR="$(cd "$SCRIPT_DIR/.." && pwd)/ca_server"
 RELEASE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)/release"
-VERSION="${1:-1.0.0}"
+VERSION="${1:-1.1.0}"
 OUTPUT="$RELEASE_DIR/ca-server-install.sh"
 
 echo "📦 打包 cert-operator 服务端 v${VERSION}"
