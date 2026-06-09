@@ -534,20 +534,39 @@ def _cmd_serve(args) -> None:
         _cfg = load_config()
         _groups = _cfg.get("groups", {}) or {}
         _dg = _get_group_config(_cfg, "default")
+        _d = request.args.get("level", "basic")
+
         _groups_info = {}
         for gname, gcfg in _groups.items():
-            _groups_info[gname] = {
-                "allowed_users": gcfg.get("allowed_users", ""),
-                "validity_hours": gcfg.get("validity_hours", validity_hours),
-                "totp_configured": bool(gcfg.get("totp_secret")),
-            }
-        return jsonify({
+            _resolved = _get_group_config(_cfg, gname) or gcfg
+            _has_totp = bool(_resolved.get("totp_secret", ""))
+            _users = _resolved.get("allowed_users", "")
+
+            if _d == "full":
+                _groups_info[gname] = {
+                    "allowed_users": _users,
+                    "validity_hours": _resolved.get("validity_hours", validity_hours),
+                    "totp_configured": _has_totp,
+                    "parent": gcfg.get("parent", "") or None,
+                    "extensions": _resolved.get("extensions", {}),
+                }
+            else:
+                # basic: 只暴露可用的组（已配 TOTP）
+                _groups_info[gname] = {
+                    "status": "ready" if _has_totp and _users.strip() else "incomplete",
+                }
+
+        result = {
             "ca_key_type": key_type,
-            "validity_hours": validity_hours,
-            "allowed_users": (_dg or {}).get("allowed_users", ""),
-            "groups": _groups_info,
             "ca_public_key": CA_KEY_PUB.read_text().strip() if CA_KEY_PUB.is_file() else None,
-        })
+        }
+        if _d == "full":
+            result["validity_hours"] = validity_hours
+            result["allowed_users"] = (_dg or {}).get("allowed_users", "")
+            result["groups"] = _groups_info
+        else:
+            result["groups"] = _groups_info
+        return jsonify(result)
 
     # ---- Start ----
     print(f"🚀 CA 服务器启动中...")

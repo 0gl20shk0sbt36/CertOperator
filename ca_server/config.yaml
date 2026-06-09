@@ -6,7 +6,7 @@ groups:
     allowed_users: root
     extensions:
       sudo: 'yes'
-    parent: base-ops
+    parent: default
     validity_hours: 1
   base-ops:
     allowed_users: operator,root
@@ -15,10 +15,10 @@ groups:
     totp_secret: EHBXS5OLS66XGHCFUNEGFJWJASRIQQRR
     validity_hours: 1
   default:
-    allowed_users: ''
+    allowed_users: root
     extensions: {}
     parent: ''
-    totp_secret: ''
+    totp_secret: DKCJQHBHQ7P5RYJOCIIW62P64IZVW4RC
     validity_hours: 1
 rate_limit:
   max_attempts: 5
