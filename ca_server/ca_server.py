@@ -429,24 +429,23 @@ def _cmd_serve(args) -> None:
 
     key_type = cfg.get("ca", {}).get("key_type", "ed25519")
     validity_minutes = cfg.get("ca", {}).get("validity_minutes", 1)
-    max_attempts = cfg.get("rate_limit", {}).get("max_attempts", 5)
-    window_seconds = cfg.get("rate_limit", {}).get("window_seconds", 300)
-
-    # ---- Rate limiter ----
+    # ---- Rate limiter 实例（启动时创建，配置变更时自动重置） ----
     rate_lock = threading.Lock()
     rate_attempts: Dict[str, list] = {}  # remote_addr -> list of timestamps
 
     def check_rate_limit(addr: str) -> bool:
-        """Return True if the request is allowed."""
+        """Return True if the request is allowed. 实时读取配置。"""
+        _rl = load_config().get("rate_limit", {})
+        _max = int(_rl.get("max_attempts", 5))
+        _window = int(_rl.get("window_seconds", 300))
         now = time.time()
         with rate_lock:
-            window_start = now - window_seconds
-            # Prune old entries
+            window_start = now - _window
             if addr in rate_attempts:
                 rate_attempts[addr] = [t for t in rate_attempts[addr] if t > window_start]
             else:
                 rate_attempts[addr] = []
-            if len(rate_attempts[addr]) >= max_attempts:
+            if len(rate_attempts[addr]) >= _max:
                 return False
             rate_attempts[addr].append(now)
             return True
@@ -503,7 +502,7 @@ def _cmd_serve(args) -> None:
         if not check_rate_limit(client_addr):
             return jsonify({
                 "success": False,
-                "error": f"请求频繁，请等待 {window_seconds} 秒",
+                "error": "请求过于频繁，请等待后重试",
             }), 429
 
         # Verify TOTP
@@ -593,7 +592,8 @@ def _cmd_serve(args) -> None:
         print(f"   允许用户: {_dg['allowed_users']}（default 组）")
     else:
         print(f"   允许用户: （空，请运行 users add）")
-    print(f"   限速: {max_attempts}次/{window_seconds}秒")
+    _rl = cfg.get("rate_limit", {})
+    print(f"   限速: {_rl.get('max_attempts',5)}次/{_rl.get('window_seconds',300)}秒")
     if no_mtls:
         print(f"   mTLS: 已禁用（仅单向验证）")
     else:
