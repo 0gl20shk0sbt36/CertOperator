@@ -11,13 +11,19 @@ err()   { echo -e "${RED}[ERR]${NC} $*" >&2; }
 if [[ $EUID -ne 0 ]]; then err "请以 root 身份运行"; exit 1; fi
 
 INSTALL_DIR="/opt/ca_server"
-BIN="$INSTALL_DIR/bin/ca-server"
+BIN="${CA_SERVER_BIN:-$(dirname "$0")/ca-server}"
+BIN_DEST="$INSTALL_DIR/bin/ca-server"
 SERVICE_USER="cert-operator"
 SERVICE_NAME="cert-operator"
 
 # 检查二进制
-if [[ ! -f "$BIN" ]]; then
-    err "请先将 ca-server 二进制放到 $BIN"
+SOURCE_BIN="${CA_SERVER_BIN:-$(dirname "$0")/ca-server}"
+if [[ ! -f "$SOURCE_BIN" ]]; then
+    err "未找到 ca-server 二进制"
+    err "请将 ca-server 放在 install.sh 同目录，或通过 CA_SERVER_BIN 环境变量指定"
+    err "  cp /path/to/ca-server $(dirname "$0")/"
+    err "  # 或"
+    err "  CA_SERVER_BIN=/path/to/ca-server bash install.sh"
     exit 1
 fi
 
@@ -25,22 +31,37 @@ info "创建用户 $SERVICE_USER ..."
 id "$SERVICE_USER" &>/dev/null || useradd -r -s /usr/sbin/nologin -M "$SERVICE_USER"
 
 mkdir -p "$INSTALL_DIR/bin"
-cp "$BIN" "$INSTALL_DIR/bin/ca-server"
-chmod 750 "$INSTALL_DIR/bin/ca-server"
-chown "root:$SERVICE_USER" "$INSTALL_DIR/bin/ca-server"
+cp "$SOURCE_BIN" "$BIN_DEST"
+chmod 750 "$BIN_DEST"
+chown "root:$SERVICE_USER" "$BIN_DEST"
 chown "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR"
 
 # 安装快捷命令（通过 sudo -u cert-operator 确保以专用用户运行）
 cat > /usr/local/bin/cert-operator << 'SHORTCUT'
 #!/bin/bash
+cd /opt/ca_server
 exec sudo -u cert-operator /opt/ca_server/bin/ca-server "$@"
 SHORTCUT
 chmod 755 /usr/local/bin/cert-operator
 info "快捷命令: cert-operator → sudo -u cert-operator /opt/ca_server/bin/ca-server"
 
+# 创建默认配置
+if [[ ! -f "$INSTALL_DIR/config.json" ]]; then
+    cat > "$INSTALL_DIR/config.json" << CFG
+{
+  "ca": { "key_type": "ed25519", "validity_minutes": 60 },
+  "server": { "host": "0.0.0.0", "port": 8443 },
+  "rate_limit": { "max_attempts": 5, "window_seconds": 300 },
+  "totp": { "issuer": "CertOperator", "account": "admin" }
+}
+CFG
+    chown "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR/config.json"
+    info "默认配置已创建: $INSTALL_DIR/config.json"
+fi
+
 # 初始化 CA
 info "初始化 CA..."
-su -s /bin/bash "$SERVICE_USER" -c "cd '$INSTALL_DIR' && '$INSTALL_DIR/bin/ca-server' init"
+su -s /bin/bash "$SERVICE_USER" -c "cd '$INSTALL_DIR' && '$BIN_DEST' init"
 
 # 拷贝卸载脚本到安装目录
 if [[ -f "$(dirname "$0")/uninstall.sh" ]]; then
@@ -75,4 +96,4 @@ info "systemd 服务已安装 ($SERVICE_NAME)"
 echo ""
 echo "✅ 部署完成"
 echo "   启动: systemctl start $SERVICE_NAME"
-echo "   版本: $($INSTALL_DIR/bin/ca-server version)"
+echo "   版本: $($BIN_DEST version)"
