@@ -219,35 +219,34 @@ echo "TrustedUserCAKeys /etc/ssh/ca_key.pub" >> /etc/ssh/sshd_config
 systemctl restart sshd
 
 # ------------------------------------------
-# B. sudo 权限控制（pam-ussh）
+# B. sudo 权限控制（cert-sudo-check）
 # ------------------------------------------
-# 3. 安装 pam-ussh（Ubuntu/Debian 无预编译包）
-apt install -y build-essential libpam-dev
-git clone https://github.com/uber/pam-ussh.git /tmp/pam-ussh
-cd /tmp/pam-ussh && make && make install
+# 3. 复制 sudo 检查脚本（从 CA 服务器或本机）
+scp ca-server:/opt/ca_server/cert-sudo-check /usr/local/bin/cert-sudo-check
+chmod +x /usr/local/bin/cert-sudo-check
 
-# 4. 配置 sudo 使用 pam_ussh
-#    授权策略：证书的 principals 包含 root 才允许 sudo
+# 4. 配置 sudo 使用 pam_exec 调用该脚本
+#    脚本检查证书的 principals 是否包含 sudo-access
 cat > /etc/pam.d/sudo << 'PAM'
-auth [success=1 default=ignore] /lib/security/pam_ussh.so ca_file=/etc/ssh/ca_key.pub authorized_principals=root
-auth requisite                  pam_deny.so
-auth required                   pam_permit.so
+auth sufficient pam_exec.so /usr/local/bin/cert-sudo-check
+auth requisite              pam_deny.so
+auth required               pam_permit.so
 PAM
 
 # 5. 客户端 SSH 必须开启 Agent Forwarding
-#    pam-ussh 从 SSH Agent 读取证书，没有 Agent 就拒绝 sudo
+#    cert-sudo-check 从 SSH Agent 读取证书
 ```
 
 > **签发证书时的 principals 策略**：
 >
 > | 组 | 允许用户 | 签发方式 | 证书 principals | 用途 |
 > |-----|---------|---------|----------------|------|
-> | admin | `aibot,root` | 不传 user | `aibot,root` | SSH 以 aibot 登录，sudo 时 pam-ussh 放行 |
+> | admin | `aibot,sudo-access` | 不传 user | `aibot,sudo-access` | SSH 以 aibot 登录，sudo 时 cert-sudo-check 放行 |
 > | aiuser | `aibot` | 不传 user | `aibot` | SSH 以 aibot 登录，sudo 被拒绝 |
 >
-> 关键：admin 组同时包含登录用户（aibot）和 sudo 授权用户（root）。**签发时不要传 `user=root`**，否则证书只有 root principal，无法 SSH 登录。
+> `sudo-access` 不是真实系统用户，只是证书里的一个标记位，不映射到任何账号。
 >
-> **客户端 SSH 时必须用 `ssh -A`**（Agent Forwarding），否则 pam-ussh 找不到证书。
+> **客户端 SSH 时必须用 `ssh -A`**（Agent Forwarding），否则 cert-sudo-check 无法读取证书。
 
 ## 子命令参考
 

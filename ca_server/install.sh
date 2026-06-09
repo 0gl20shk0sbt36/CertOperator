@@ -316,6 +316,14 @@ chmod +x /usr/local/bin/cert-operator
 info "快捷命令已安装: cert-operator"
 
 # =============================================================================
+# 6b. 安装 cert-sudo-check（PAM sudo 权限检查）
+# =============================================================================
+if [[ -f "$INSTALL_DIR/cert-sudo-check" ]]; then
+    cp "$INSTALL_DIR/cert-sudo-check" /usr/local/bin/cert-sudo-check
+    chmod +x /usr/local/bin/cert-sudo-check
+fi
+
+# =============================================================================
 # 7. 将 CA 公钥配置到本机 SSH（TrustedUserCAKeys）
 # =============================================================================
 CA_PUB="$INSTALL_DIR/data/ca_key.pub"

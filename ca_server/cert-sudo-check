@@ -1,0 +1,52 @@
+#!/bin/bash
+# =============================================================================
+# cert-sudo-check — 检查 SSH 证书是否包含 sudo-access principal
+# 通过 PAM pam_exec.so 调用，exit 0 = 允许 sudo，exit 1 = 拒绝
+# =============================================================================
+set -euo pipefail
+
+# ---- 配置（可通过环境变量覆盖） ----
+CA_PUB_FILE="${CERT_SUDO_CA:-/opt/ca_server/data/ca_key.pub}"
+ALLOWED_PRINCIPAL="${CERT_SUDO_PRINCIPAL:-sudo-access}"
+
+# ---- 检查 SSH Agent ----
+if [[ -z "${SSH_AUTH_SOCK:-}" ]]; then
+    exit 1  # 没有 agent，拒绝 sudo
+fi
+
+# ---- 从 Agent 列举证书 ----
+CERT_DATA=$(ssh-add -L 2>/dev/null) || exit 1
+if [[ -z "$CERT_DATA" ]]; then
+    exit 1  # agent 里没有证书
+fi
+
+# ---- 获取 CA 公钥指纹（用于验证证书是否由我们签发） ----
+if [[ ! -f "$CA_PUB_FILE" ]]; then
+    exit 1
+fi
+CA_FINGERPRINT=$(ssh-keygen -lf "$CA_PUB_FILE" 2>/dev/null) || exit 1
+
+# ---- 逐一检查每个身份 ----
+while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    # 跳过非证书密钥（普通公钥没有 ssh-...-cert-v01@openssh.com）
+    echo "$line" | grep -q "cert-v01@openssh.com" || continue
+
+    # 临时文件解析
+    TMP=$(mktemp)
+    echo "$line" > "$TMP"
+    INFO=$(ssh-keygen -L -f "$TMP" 2>/dev/null || true)
+    rm -f "$TMP"
+
+    # 检查 CA 签名（验证是否由我们签发）
+    if ! echo "$INFO" | grep -qF "$CA_FINGERPRINT"; then
+        continue  # 不是我们签发的证书，跳过
+    fi
+
+    # 检查 principal 是否包含 sudo-access
+    if echo "$INFO" | grep -q "Principals:.*$ALLOWED_PRINCIPAL"; then
+        exit 0  # ✅ 有 sudo-access → 允许 sudo
+    fi
+done <<< "$CERT_DATA"
+
+exit 1  # ❌ 没有找到有效证书 → 拒绝 sudo
