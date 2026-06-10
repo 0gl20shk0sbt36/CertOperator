@@ -37,7 +37,7 @@ DEFAULT_TIMEOUT = 30
 DEFAULT_CA_CERT = DEFAULT_CERTS_DIR / "ca-https-cert.pem"
 DEFAULT_CLIENT_CERT = DEFAULT_CERTS_DIR / "client.cert"
 DEFAULT_CLIENT_KEY = DEFAULT_CERTS_DIR / "client.key"
-PLUGIN_VERSION = "2.3.0"
+PLUGIN_VERSION = "3.0.0"
 
 # ---------------------------------------------------------------------------
 # HTTP 请求库：优先用 requests，回退到 urllib

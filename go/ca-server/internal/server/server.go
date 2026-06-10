@@ -32,7 +32,7 @@ import (
 
 const (
 	// Version embedded at build time; overridden by ldflags or main.go's VERSION.
-	BuiltVersion = "2.3.0"
+	BuiltVersion = "3.0.0"
 	name         = "cert-operator"
 )
 

@@ -477,14 +477,14 @@ scp root@ca-server:/opt/ca_server/data/https_cert.pem ~/.hermes/certs/ca-https-c
 
 ```bash
 # 下载二进制
-wget https://github.com/user/cert-operator/releases/download/v2.3.0/cert-operator-v2.3.0-linux-x86_64.tar.gz
-tar -xzf cert-operator-v2.3.0-linux-x86_64.tar.gz
+wget https://github.com/user/cert-operator/releases/download/v3.0.0/cert-operator-v3.0.0-linux-x86_64.tar.gz
+tar -xzf cert-operator-v3.0.0-linux-x86_64.tar.gz
 chmod +x cert-operator
 sudo mv cert-operator /usr/local/bin/
 
 # 验证
 cert-operator version
-# 输出: cert-operator v2.3.0
+# 输出: cert-operator v3.0.0
 ```
 
 ### CLI 命令一览
@@ -1024,9 +1024,9 @@ bash diagnose.sh 121.196.206.66 22 root
 
 | 组件 | 当前版本 | 说明 |
 |------|---------|------|
-| `cert-operator` CLI | v2.3.0 | 客户端命令行工具 |
-| `ca-server` | v2.3.0 | 服务器端 |
-| `cert-operator-plugin` | v2.3.0 | Hermes AI 插件 |
+| `cert-operator` CLI | v3.0.0 | 客户端命令行工具 |
+| `ca-server` | v3.0.0 | 服务器端 |
+| `cert-operator-plugin` | v3.0.0 | Hermes AI 插件 |
 | `cert-sudo-check` | v9 | 目标服务器 PAM 检查脚本 |
 | `sudo-wrapper` | v2 | 目标服务器 sudo 替换脚本 |
 | `deploy-sudo-wrapper.sh` | v2 | 目标服务器部署脚本 |

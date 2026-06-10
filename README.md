@@ -6,8 +6,8 @@
 
 ```bash
 # 1. 服务端部署（CA 服务器）
-wget https://github.com/user/cert-operator/releases/download/v2.3.0/ca-server-install-v2.3.0.sh
-sudo bash ca-server-install-v2.3.0.sh
+wget https://github.com/user/cert-operator/releases/download/v3.0.0/ca-server-install-v3.0.0.sh
+sudo bash ca-server-install-v3.0.0.sh
 # install.sh 会自动检测服务器 IP、生成 CA 密钥、安装 systemd 服务
 
 # 2. 部署客户端证书
@@ -59,11 +59,11 @@ cert-operator ssh 192.168.1.100 root ~/.hermes/certs/my-key "sudo systemctl stat
 
 ## 版本
 
-当前版本：**v2.3.0**
+当前版本：**v3.0.0**
 
 | 版本 | 变更 |
 |------|------|
-| v2.3.0 | dpkg-divert sudo wrapper、cert-sudo-check v9、agent 自动清理 |
+| v3.0.0 | dpkg-divert sudo wrapper、cert-sudo-check v9、agent 自动清理 |
 | v2.2.0 | reset 命令、mount namespace sudo 包装 |
 | v2.1.0 | cert-sudo-check v3、handler dict 修复 |
 | v2.0.0 | Go 重写（零外部依赖）|

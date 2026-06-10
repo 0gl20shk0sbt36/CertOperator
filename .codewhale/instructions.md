@@ -53,7 +53,7 @@ workspace/
 - v2.0.0 — Go 重写，零外部依赖
 - v2.1.0 — cert-sudo-check v3 磁盘扫描 + handler dict 修复
 - v2.2.0 — reset 命令 + mount namespace sudo 包装
-- v2.3.0 — dpkg-divert sudo wrapper（当前版本）
+- v3.0.0 — dpkg-divert sudo wrapper、cert-sudo-check v9、agent 自动清理（当前版本）
 
 ## 架构
 
