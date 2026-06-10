@@ -35,8 +35,19 @@ func main() {
 		cmdSSH(args)
 	case "deploy":
 		cmdDeploy(args)
+	case "health":
+		cmdHealth(args)
 	case "version":
-		fmt.Printf("cert-operator v%s\n", VERSION)
+		if len(args) > 0 && args[0] == "--server" {
+			if len(args) > 1 {
+				cmdServerVersion(args[1])
+			} else {
+				fmt.Fprintf(os.Stderr, "用法: cert-operator version --server <url>\n")
+				os.Exit(1)
+			}
+		} else {
+			fmt.Printf("cert-operator v%s\n", VERSION)
+		}
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", cmd)
 		printUsage()
@@ -254,6 +265,40 @@ func loadCert(certFile, keyFile string) []tls.Certificate {
 	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
 	if err != nil { return nil }
 	return []tls.Certificate{cert}
+}
+
+func makeClient(server string, flags map[string]string) *http.Client {
+	caCert := flags["--ca-cert"]; if caCert == "" { caCert = defaultPath("ca-https-cert.pem") }
+	clientCert := flags["--client-cert"]; if clientCert == "" { clientCert = defaultPath("client.cert") }
+	clientKey := flags["--client-key"]; if clientKey == "" { clientKey = defaultPath("client.key") }
+	certPool := x509.NewCertPool()
+	caData, _ := os.ReadFile(caCert)
+	if caData != nil { certPool.AppendCertsFromPEM(caData) }
+	return &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{RootCAs: certPool, Certificates: loadCert(clientCert, clientKey)},
+		}, Timeout: 15 * time.Second,
+	}
+}
+
+func cmdHealth(args []string) {
+	if len(args) < 1 { fmt.Fprintf(os.Stderr, "用法: cert-operator health <server>\n"); os.Exit(1) }
+	flags := parseFlags(args[1:])
+	client := makeClient(args[0], flags)
+	resp, err := client.Get(strings.TrimRight(args[0], "/") + "/api/health")
+	if err != nil { fmt.Fprintf(os.Stderr, "❌ 健康检查失败: %v\n", err); os.Exit(1) }
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	fmt.Println(string(body))
+}
+
+func cmdServerVersion(server string) {
+	client := makeClient(server, parseFlags(nil))
+	resp, err := client.Get(strings.TrimRight(server, "/") + "/api/version")
+	if err != nil { fmt.Fprintf(os.Stderr, "❌ 获取版本失败: %v\n", err); os.Exit(1) }
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	fmt.Println(string(body))
 }
 
 // ---- ssh ----------------------------------------------------------------

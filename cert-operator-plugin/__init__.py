@@ -300,6 +300,47 @@ def _run_ssh(
 # 工具 schemas & handlers
 # ---------------------------------------------------------------------------
 
+def _call_server_api(server, endpoint, ca_cert_path=None, client_cert=None, client_key=None):
+    """Call CA server API endpoint and return JSON."""
+    ca_path = ca_cert_path or str(DEFAULT_CA_CERT)
+    cc = client_cert or str(DEFAULT_CLIENT_CERT)
+    ck = client_key or str(DEFAULT_CLIENT_KEY)
+    url = f"{server.rstrip(chr(47))}/api/{endpoint}"
+    if HAS_REQUESTS:
+        import requests
+        resp = requests.get(url, verify=ca_path, cert=(cc, ck), timeout=15)
+        resp.raise_for_status()
+        return json.dumps({"success": True, "data": resp.json()}, ensure_ascii=False, default=str)
+    else:
+        import ssl, urllib.request
+        ctx = ssl.create_default_context(cafile=ca_path)
+        ctx.load_cert_chain(cc, ck)
+        with urllib.request.urlopen(url, context=ctx, timeout=15) as r:
+            d = json.loads(r.read().decode())
+            return json.dumps({"success": True, "data": d}, ensure_ascii=False, default=str)
+
+def _handle_get_server_info(params=None, **kwargs):
+    if params is None or not isinstance(params, dict): params = kwargs
+    try:
+        return _call_server_api(params.get("server",""), "info?level=full", params.get("ca_cert_path"), params.get("client_cert"), params.get("client_key"))
+    except Exception as e:
+        return json.dumps({"success": False, "error": str(e)}, ensure_ascii=False)
+
+def _handle_get_server_health(params=None, **kwargs):
+    if params is None or not isinstance(params, dict): params = kwargs
+    try:
+        return _call_server_api(params.get("server",""), "health", params.get("ca_cert_path"), params.get("client_cert"), params.get("client_key"))
+    except Exception as e:
+        return json.dumps({"success": False, "error": str(e)}, ensure_ascii=False)
+
+def _handle_get_server_version(params=None, **kwargs):
+    if params is None or not isinstance(params, dict): params = kwargs
+    try:
+        return _call_server_api(params.get("server",""), "version", params.get("ca_cert_path"), params.get("client_cert"), params.get("client_key"))
+    except Exception as e:
+        return json.dumps({"success": False, "error": str(e)}, ensure_ascii=False)
+
+
 SCHEMA_GET_SUB_CERT = {
     "name": "get_sub_cert",
     "description": (
@@ -503,20 +544,34 @@ def _handle_ssh_with_cert(params=None, **kwargs) -> str:
 
 
 def register(ctx) -> None:
-    """注册 cert-operator 的两个工具。"""
+    """注册 cert-operator 的所有工具。"""
     ctx.register_tool(
-        name="get_sub_cert",
-        toolset="custom",
-        schema=SCHEMA_GET_SUB_CERT,
-        handler=_handle_get_sub_cert,
-        description="🔐 【工作流第1步】获取TOTP码→CA签发SSH子证书→保存到~/.hermes/certs/。先问用户要TOTP验证码，返回的cert_path用于下一步ssh_with_cert",
+        name="get_sub_cert", toolset="custom",
+        schema=SCHEMA_GET_SUB_CERT, handler=_handle_get_sub_cert,
+        description="🔐 【工作流第1步】获取TOTP码→CA签发SSH子证书→保存到本地。先问用户要TOTP验证码，返回的cert_path用于下一步ssh_with_cert",
         emoji="🔐",
     )
     ctx.register_tool(
-        name="ssh_with_cert",
-        toolset="custom",
-        schema=SCHEMA_SSH_WITH_CERT,
-        handler=_handle_ssh_with_cert,
+        name="ssh_with_cert", toolset="custom",
+        schema=SCHEMA_SSH_WITH_CERT, handler=_handle_ssh_with_cert,
         description="🔑 【工作流第2步】用get_sub_cert获取的证书SSH登录目标服务器。传入cert_path（上一步返回值）+host+user+command",
         emoji="🔑",
+    )
+    ctx.register_tool(
+        name="get_server_info", toolset="custom",
+        schema={"name":"get_server_info","description":"查询CA服务器信息（组配置、CA公钥指纹等）",
+                "parameters":{"type":"object","properties":{"server":{"type":"string","description":"【必填】CA服务器地址"}},"required":["server"]}},
+        handler=_handle_get_server_info, emoji="ℹ️",
+    )
+    ctx.register_tool(
+        name="get_server_health", toolset="custom",
+        schema={"name":"get_server_health","description":"检查CA服务器是否在线",
+                "parameters":{"type":"object","properties":{"server":{"type":"string","description":"【必填】CA服务器地址"}},"required":["server"]}},
+        handler=_handle_get_server_health, emoji="💚",
+    )
+    ctx.register_tool(
+        name="get_server_version", toolset="custom",
+        schema={"name":"get_server_version","description":"查询CA服务器版本号",
+                "parameters":{"type":"object","properties":{"server":{"type":"string","description":"【必填】CA服务器地址"}},"required":["server"]}},
+        handler=_handle_get_server_version, emoji="📌",
     )
