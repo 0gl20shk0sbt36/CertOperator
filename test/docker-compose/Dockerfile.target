@@ -1,4 +1,4 @@
-# cert-operator 目标服务器（测试用 — 仅基础环境 + PAM 测试工具）
+# cert-operator 目标服务器（测试用 — 仅基础环境）
 FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -17,5 +17,4 @@ RUN sed -i 's/.*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/s
     ssh-keygen -A
 
 EXPOSE 22
-
 CMD mkdir -p /run/sshd && exec /usr/sbin/sshd -D -e

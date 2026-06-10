@@ -1,7 +1,7 @@
 # cert-operator 测试环境
 #
-# 启动：docker compose up -d --build
-# 停止：docker compose down -v
+# 启动：docker compose -f test/docker-compose.yml up -d --build
+# 停止：docker compose -f test/docker-compose.yml down -v
 #
 # 包含两个干净的 Ubuntu 22.04 容器，可 SSH 进入手动测试：
 #   ca-server   (端口 2225 → 22, 8443 → 8443)
@@ -16,8 +16,8 @@ version: "3.9"
 services:
   ca-server:
     build:
-      context: .
-      dockerfile: docker-compose/Dockerfile.ca
+      context: ..
+      dockerfile: test/docker-compose/Dockerfile.ca
     container_name: cert-ca
     hostname: ca-server
     ports:
@@ -26,8 +26,8 @@ services:
 
   test-target:
     build:
-      context: .
-      dockerfile: docker-compose/Dockerfile.target
+      context: ..
+      dockerfile: test/docker-compose/Dockerfile.target
     container_name: cert-target
     hostname: test-target
     ports:

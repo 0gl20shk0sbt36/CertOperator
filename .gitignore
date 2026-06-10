@@ -22,3 +22,6 @@ release/
 Thumbs.db
 .deepseek/state/
 go/ca-server/bin/
+test/
+test_data/
+
