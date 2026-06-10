@@ -1,8 +1,0 @@
-name: cert-operator
-version: 1.2.0
-description: "通过 TOTP 一次性密钥经 HTTPS（自签证书验证）从 CA 服务器获取 SSH 子证书"
-author: yyx
-provides_tools:
-  - get_sub_cert
-  - ssh_with_cert
-requires_env: []

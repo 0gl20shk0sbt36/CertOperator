@@ -1,4 +1,0 @@
-flask>=3.0
-pyotp>=2.9
-pyyaml>=6.0
-qrcode[pil]>=7.0    # 可选：生成 PNG 格式 TOTP 二维码
