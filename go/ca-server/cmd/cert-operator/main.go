@@ -29,6 +29,8 @@ func main() {
 	switch cmd {
 	case "get-cert":
 		cmdGetCert(args)
+	case "info":
+		cmdInfo(args)
 	case "ssh":
 		cmdSSH(args)
 	case "deploy":
@@ -198,6 +200,60 @@ func cmdGetCert(args []string) {
 	fmt.Printf("   证书: %s\n", certPath)
 	if s, ok := result["serial"]; ok { fmt.Printf("   序列号: %v\n", s) }
 	if e, ok := result["expires_at"]; ok { fmt.Printf("   过期:   %v\n", e) }
+}
+
+// ---- info ---------------------------------------------------------------
+
+func cmdInfo(args []string) {
+	if len(args) < 1 {
+		fmt.Fprintf(os.Stderr, "用法: cert-operator info <server>\n")
+		os.Exit(1)
+	}
+	server := args[0]
+	flags := parseFlags(args[1:])
+	caCert := flags["--ca-cert"]
+	if caCert == "" { caCert = defaultPath("ca-https-cert.pem") }
+	clientCert := flags["--client-cert"]
+	if clientCert == "" { clientCert = defaultPath("client.cert") }
+	clientKey := flags["--client-key"]
+	if clientKey == "" { clientKey = defaultPath("client.key") }
+
+	certPool := x509.NewCertPool()
+	caData, _ := os.ReadFile(caCert)
+	if caData != nil {
+		certPool.AppendCertsFromPEM(caData)
+	}
+	client := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				RootCAs:      certPool,
+				Certificates: loadCert(clientCert, clientKey),
+			},
+		},
+		Timeout: 15 * time.Second,
+	}
+
+	// 获取服务器信息
+	resp, err := client.Get(strings.TrimRight(server, "/") + "/api/info?level=full")
+	if err != nil {
+		// 回退到基础 info
+		resp, err = client.Get(strings.TrimRight(server, "/") + "/api/info")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "❌ 获取信息失败: %v\n", err)
+			os.Exit(1)
+		}
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	var data interface{}
+	json.Unmarshal(body, &data)
+	fmt.Println(string(body))
+}
+
+func loadCert(certFile, keyFile string) []tls.Certificate {
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil { return nil }
+	return []tls.Certificate{cert}
 }
 
 // ---- ssh ----------------------------------------------------------------
