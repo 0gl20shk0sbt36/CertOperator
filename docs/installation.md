@@ -14,10 +14,10 @@
 
 ```bash
 # 下载安装器
-wget https://github.com/user/cert-operator/releases/download/v2.3.0/ca-server-install-v2.3.0.sh
+wget https://github.com/user/cert-operator/releases/download/v3.0.0/ca-server-install-v3.0.0.sh
 
 # 安装
-sudo bash ca-server-install-v2.3.0.sh
+sudo bash ca-server-install-v3.0.0.sh
 ```
 
 安装过程自动：
@@ -40,7 +40,7 @@ sudo bash install.sh
 ### 方式三：手动解压安装
 
 ```bash
-tar -xzf ca-server-v2.3.0-linux-x86_64.tar.gz
+tar -xzf ca-server-v3.0.0-linux-x86_64.tar.gz
 cd ca-server
 sudo bash install.sh
 ```
@@ -83,7 +83,7 @@ ssh user@client "bash ~/deploy.sh"
 ### 安装 CLI
 
 ```bash
-tar -xzf cert-operator-v2.3.0-linux-x86_64.tar.gz
+tar -xzf cert-operator-v3.0.0-linux-x86_64.tar.gz
 sudo mv cert-operator/cert-operator /usr/local/bin/
 cert-operator version   # 确认版本
 ```
@@ -109,7 +109,7 @@ deploy.sh 会部署三个文件到 `~/.hermes/certs/`：
 ### 安装 Hermes 插件
 
 ```bash
-tar -xzf cert-operator-plugin-v2.3.0.tar.gz
+tar -xzf cert-operator-plugin-v3.0.0.tar.gz
 mkdir -p ~/.hermes/plugins
 cp -r cert-operator-plugin ~/.hermes/plugins/
 # 重启 Hermes，工具自动出现
@@ -228,15 +228,15 @@ rm -rf ~/.hermes/plugins/cert-operator-plugin
 
 ```bash
 # ===== CA 服务器 =====
-wget https://github.com/user/cert-operator/releases/download/v2.3.0/ca-server-install-v2.3.0.sh
-sudo bash ca-server-install-v2.3.0.sh
+wget https://github.com/user/cert-operator/releases/download/v3.0.0/ca-server-install-v3.0.0.sh
+sudo bash ca-server-install-v3.0.0.sh
 cert-operator groups create admin
 cert-operator groups users admin add root
 cert-operator groups totp admin set
 sudo systemctl start cert-operator
 
 # ===== 客户端 =====
-tar -xzf cert-operator-v2.3.0-linux-x86_64.tar.gz
+tar -xzf cert-operator-v3.0.0-linux-x86_64.tar.gz
 sudo mv cert-operator/cert-operator /usr/local/bin/
 scp root@ca-server:/opt/ca_server/data/dist/deploy.sh ./
 bash deploy.sh

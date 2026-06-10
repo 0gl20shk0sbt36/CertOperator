@@ -832,7 +832,7 @@ eval $(ssh-agent -k)
 ```bash
 # 查看 CA 版本信息
 curl -sk https://ca-server:8443/api/version
-# {"version":"2.3.0"}
+# {"version":"3.0.0"}
 
 # 查看组信息（需 mTLS）
 curl -sk --cert client.cert --key client.key \
@@ -1031,7 +1031,7 @@ bash diagnose.sh 121.196.206.66 22 root
 | `sudo-wrapper` | v2 | 目标服务器 sudo 替换脚本 |
 | `deploy-sudo-wrapper.sh` | v2 | 目标服务器部署脚本 |
 
-**版本一致性要求：** 所有组件版本号必须一致。不匹配可能导致接口不兼容。
+**版本一致性要求：** 客户端的 cert-operator CLI 与 cert-operator-plugin 版本号应一致。不匹配可能导致接口不兼容。
 
 ## 附录 C：文件清单
 

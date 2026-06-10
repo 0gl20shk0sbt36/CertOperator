@@ -116,7 +116,7 @@ cert-operator serve --debug
 
 ```bash
 $ cert-operator serve
-cert-operator v2.3.0 — serving on https://0.0.0.0:8443
+cert-operator v3.0.0 — serving on https://0.0.0.0:8443
   CA ready: true
   rate limit: 5/300s
   mTLS: enabled
@@ -473,7 +473,7 @@ cert-operator reset all
 
 ```bash
 cert-operator version
-cert-operator v2.3.0
+cert-operator v3.0.0
 ```
 
 ---
@@ -492,7 +492,7 @@ CA_SERVER_CONFIG=/path/to/config.json cert-operator serve
 
 ```bash
 # 1. 安装
-sudo bash ca-server-install-v2.3.0.sh
+sudo bash ca-server-install-v3.0.0.sh
 
 # 2. 创建管理组和 TOTP
 cert-operator groups create admin

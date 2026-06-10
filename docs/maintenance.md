@@ -174,7 +174,7 @@ dpkg-divert --remove /usr/bin/sudo
 # 错误：安装包已损坏（未找到内嵌数据）
 
 # 确认 grep 版本支持 -a 参数
-grep -an "^__ARCHIVE__$" ca-server-install-v2.3.0.sh
+grep -an "^__ARCHIVE__$" ca-server-install-v3.0.0.sh
 
 # 如果 grep 找不到标记行，可能包已损坏，重新下载
 ```
@@ -205,7 +205,7 @@ cp /opt/ca_server/config.json /backup/
 
 ```bash
 # 全新安装后恢复数据
-sudo bash ca-server-install-v2.3.0.sh
+sudo bash ca-server-install-v3.0.0.sh
 sudo systemctl stop cert-operator
 
 # 恢复备份
@@ -229,7 +229,7 @@ tar -czf ca-server-backup.tar.gz \
   /opt/ca_server/config.json
 
 # 新机器：安装系统
-sudo bash ca-server-install-v2.3.0.sh
+sudo bash ca-server-install-v3.0.0.sh
 
 # 新机器：停止服务并恢复数据
 sudo systemctl stop cert-operator
@@ -255,7 +255,7 @@ ssh user@client "bash ~/deploy.sh"
 ### 正常启动日志
 
 ```
-cert-operator v2.3.0 — serving on https://0.0.0.0:8443
+cert-operator v3.0.0 — serving on https://0.0.0.0:8443
   CA ready: true
   rate limit: 5/300s
   mTLS: enabled

@@ -16,7 +16,7 @@
 ## 安装
 
 ```bash
-tar -xzf cert-operator-plugin-v2.3.0.tar.gz
+tar -xzf cert-operator-plugin-v3.0.0.tar.gz
 mkdir -p ~/.hermes/plugins
 cp -r cert-operator-plugin ~/.hermes/plugins/
 ```

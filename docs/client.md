@@ -102,5 +102,5 @@ cert-operator ssh prod-db.internal root /home/user/.hermes/certs/prod-db \
 
 ```bash
 cert-operator version
-# cert-operator v2.3.0
+# cert-operator v3.0.0
 ```
