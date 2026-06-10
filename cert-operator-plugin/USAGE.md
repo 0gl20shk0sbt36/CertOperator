@@ -88,6 +88,15 @@ ssh_with_cert → 用 cert_path SSH 登录目标服务器 → 执行命令
 }
 ```
 
+### 关于 sudo 免密码
+
+cert-operator CLI 在 SSH 时会自动：
+1. 将证书加载到 SSH agent
+2. 启用 agent forwarding（`-A`）
+
+因此远程服务器上的 `cert-sudo-check` 能读取到证书中的 `sudo@cert-operator` 扩展，
+实现 sudo 免密码。无需人工操作。
+
 ---
 
 ## 完整工作流示例
