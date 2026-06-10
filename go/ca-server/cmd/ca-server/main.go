@@ -24,7 +24,7 @@ import (
 	"github.com/cert-operator/ca-server/v2/internal/totp"
 )
 
-const VERSION = "2.0.0"
+const VERSION = "2.1.0"
 
 var configPath string
 

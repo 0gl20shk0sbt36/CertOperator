@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-const VERSION = "2.0.0"
+const VERSION = "2.1.0"
 
 func main() {
 	if len(os.Args) < 2 || os.Args[1] == "--help" || os.Args[1] == "-h" {

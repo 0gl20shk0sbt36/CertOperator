@@ -37,7 +37,7 @@ DEFAULT_TIMEOUT = 30
 DEFAULT_CA_CERT = DEFAULT_CERTS_DIR / "ca-https-cert.pem"
 DEFAULT_CLIENT_CERT = DEFAULT_CERTS_DIR / "client.cert"
 DEFAULT_CLIENT_KEY = DEFAULT_CERTS_DIR / "client.key"
-PLUGIN_VERSION = "2.0.0"
+PLUGIN_VERSION = "2.1.0"
 
 # ---------------------------------------------------------------------------
 # HTTP 请求库：优先用 requests，回退到 urllib
@@ -328,7 +328,9 @@ SCHEMA_SSH_WITH_CERT = {
 }
 
 
-def _handle_get_sub_cert(params: dict) -> str:
+def _handle_get_sub_cert(params=None, **kwargs) -> str:
+    if params is None or not isinstance(params, dict):
+        params = kwargs
     try:
         server = params.get("server", "")
         totp_code = params.get("totp_code", "")
@@ -376,7 +378,9 @@ def _handle_get_sub_cert(params: dict) -> str:
         return json.dumps({"success": False, "error": f"{msg}{hint}"}, ensure_ascii=False)
 
 
-def _handle_ssh_with_cert(params: dict) -> str:
+def _handle_ssh_with_cert(params=None, **kwargs) -> str:
+    if params is None or not isinstance(params, dict):
+        params = kwargs
     try:
         host = params.get("host", "")
         user = params.get("user", "")
