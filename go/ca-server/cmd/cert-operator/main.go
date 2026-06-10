@@ -224,24 +224,37 @@ func cmdSSH(args []string) {
 		}
 	}
 
-	// SSH agent: load cert for agent forwarding (needed by cert-sudo-check)
-	tryAddToAgent(keyPath)
-
 	sshArgs := []string{
 		"-i", keyPath,
 		"-p", port,
-		"-A",
 		"-o", "StrictHostKeyChecking=accept-new",
 		"-o", fmt.Sprintf("ConnectTimeout=%d", 15),
 		fmt.Sprintf("%s@%s", user, host),
 	}
 	if command != "" {
-		// Ubuntu 24.04+ sudo -n 不调用 PAM，cert-sudo-check 不会执行。
-		// 自动替换 sudo -n 为 sudo -S + 无效密码管道，触发 PAM。
-		// 证书含 sudo 扩展 → cert-sudo-check exit 0 → auth sufficient → sudo 放行
-		// 证书无 sudo 扩展 → cert-sudo-check exit 1 → pam_unix 拒绝无效密码 → 拒绝
-		command = strings.ReplaceAll(command, "sudo -n ", "echo 'invalid-password-420' | sudo -S ")
-		sshArgs = append(sshArgs, command)
+		// Ubuntu 24.04+ sudo -n 不调用 PAM。
+		// 用 PATH 覆盖注入 wrapper sudo 脚本，拦截 sudo 调用。
+		// wrapper 检测 -n → 调用 cert-sudo-check → 有证书则去掉 -n 调原 sudo。
+		// PATH 覆盖仅对当前命令生效，退出即恢复。
+		wrapper := fmt.Sprintf(`
+_TMP=$(mktemp -d)
+cat > $_TMP/su << 'SUWRP'
+#!/bin/bash
+_H=; _A=()
+for a in "$@"; do [ "$a" = "-n" ] && _H=1 || _A+=("$a"); done
+if [ -n "$_H" ] && /usr/local/bin/cert-sudo-check 2>/dev/null; then
+    exec /usr/bin/sudo "${_A[@]}"
+fi
+[ -z "$_H" ] && exec /usr/bin/sudo "$@"
+echo >&2 "sudo: needpassword"; exit 1
+SUWRP
+chmod +x $_TMP/su
+PATH=$_TMP:$PATH bash -c '%s'
+_R=$?
+rm -rf $_TMP
+exit $_R
+`, command)
+		sshArgs = append(sshArgs, wrapper)
 	}
 
 	cmd := exec.Command("ssh", sshArgs...)
