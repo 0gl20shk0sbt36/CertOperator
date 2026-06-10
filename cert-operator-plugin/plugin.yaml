@@ -1,6 +1,11 @@
 name: cert-operator
 version: "2.0.0"
-description: "通过 TOTP 一次性密钥从 CA 服务器获取 SSH 子证书，并用子证书 SSH 登录目标服务器。CA 服务端运行在被连接的设备上（端口 8443），通过 mTLS 双向证书验证 + TOTP 签发子证书。密钥仅短暂经过 AI 上下文，子证书 HTTPS 安全传输。"
+description: >
+  【SSH 证书管理插件】通过 TOTP + 自签证书从 CA 服务器获取 SSH 子证书。
+  提供两个按顺序执行的工作流工具：
+    1. get_sub_cert — AI 向用户索要 TOTP 验证码 → 调用此工具 → 获取 SSH 子证书并保存到本地
+    2. ssh_with_cert — 用上一步获取的证书 SSH 登录目标服务器，执行命令
+  适用于零信任远程登录场景，支持 sudo 权限控制。
 author: yyx
 provides_tools:
   - get_sub_cert

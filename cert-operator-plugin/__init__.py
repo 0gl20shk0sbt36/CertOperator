@@ -227,45 +227,57 @@ def _run_ssh(
 SCHEMA_GET_SUB_CERT = {
     "name": "get_sub_cert",
     "description": (
-        "从 CA 服务器获取 SSH 子证书。"
-        "需要用户先从 TOTP 认证器 App 获取当前 6 位验证码。"
-        "服务器验证 TOTP 后签发 SSH 子证书，"
-        "通过 HTTPS（支持自签证书 + mTLS）加密传输。"
+        "【工作流第 1 步】从 CA 服务器获取 SSH 子证书。\n\n"
+        "使用场景：用户需要通过 SSH 远程登录一台服务器（目标服务器），"
+        "这台服务器信任 cert-operator CA 签发的 SSH 证书。\n\n"
+        "执行流程：\n"
+        "  1. 【告诉用户】请打开手机上的 TOTP 认证器 App（如 Google Authenticator），\n"
+        "     查看当前 6 位一次性验证码，然后把验证码告诉我。\n"
+        "  2. 用户提供验证码后，调用此工具传入 server 和 totp_code。\n"
+        "  3. 服务器验证 TOTP 码，签发一张 SSH 子证书。\n"
+        "  4. HTTPS 加密传输到本地，保存到 ~/.hermes/certs/ 目录。\n\n"
+        "注意：\n"
+        "  - cert_name 用于本地文件名标识，取完证书后返回值中有 cert_path。\n"
+        "  - 下一步用 ssh_with_cert 工具连接目标服务器，传入该 cert_path。\n"
+        "  - 如果 CA 服务器使用自签证书，需要 ca_cert_path 参数。\n"
+        "  - 如果 CA 服务器启用了 mTLS，需要 client_cert 和 client_key。\n"
+        "  - 如果服务器用组管理权限，传入 group_name 获取对应组的证书。\n"
+        "  - user_name 指定证书允许登录的 SSH 用户名。"
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "server": {
                 "type": "string",
-                "description": "CA 服务器地址，如 'https://121.196.206.66:8443'",
+                "description": "【必填】CA 服务器地址，格式 'https://<IP>:8443'。例如 'https://121.196.206.66:8443'",
             },
             "totp_code": {
                 "type": "string",
-                "description": "用户从 TOTP App 获取的当前 6 位验证码",
+                "description": "【必填】用户从 TOTP App 看到的当前 6 位验证码。如果用户还没提供，先问用户。格式：6位数字，如 '123456'",
             },
             "cert_name": {
                 "type": "string",
-                "description": "证书标识（本地文件名），如 'cloud-server'",
+                "description": "【必填】证书标识名称，用于本地文件名。建议用目标服务器的用途命名，如 'prod-db'、'web-server'、'dev-box'。最终文件保存为 ~/.hermes/certs/<cert_name>（私钥）和 ~/.hermes/certs/<cert_name>-cert.pub（证书）",
             },
             "ca_cert_path": {
                 "type": "string",
-                "description": "CA HTTPS 证书路径，默认 ~/.hermes/certs/ca-https-cert.pem",
+                "description": "【选填】CA 服务器自签 HTTPS 证书的本地路径。默认 ~/.hermes/certs/ca-https-cert.pem。如果服务器使用自签证书，必须传此参数，否则 SSL 验证会失败。如果已有 deploy.sh 部署过客户端证书，通常不需要修改。",
             },
             "client_cert": {
                 "type": "string",
-                "description": "mTLS 客户端证书路径",
+                "description": "【选填】mTLS 客户端证书路径。默认 ~/.hermes/certs/client.cert。如果部署了客户端证书包（deploy.sh），此参数通常不需要修改。",
             },
             "client_key": {
                 "type": "string",
-                "description": "mTLS 客户端密钥路径",
+                "description": "【选填】mTLS 客户端密钥路径。默认 ~/.hermes/certs/client.key。如果部署了客户端证书包（deploy.sh），此参数通常不需要修改。",
             },
             "group_name": {
                 "type": "string",
-                "description": "组名（默认使用 default 组）",
+                "description": "【选填】CA 服务器上的用户组名。服务器上的组控制证书是否有 sudo 权限、有效期等。不传则使用 default 组（需已配置 TOTP）。例如 admin（有 sudo）、operator（无 sudo）",
             },
             "user_name": {
                 "type": "string",
-                "description": "SSH 用户名",
+                "description": "【选填】要登录的目标服务器 SSH 用户名。证书会签发为该用户，SSH 时只能用这个用户名登录。如果该用户不在组的允许列表中会失败。例如 root、ubuntu、ec2-user",
             },
         },
         "required": ["server", "totp_code", "cert_name"],
@@ -275,31 +287,39 @@ SCHEMA_GET_SUB_CERT = {
 SCHEMA_SSH_WITH_CERT = {
     "name": "ssh_with_cert",
     "description": (
-        "用 SSH 子证书连接到目标服务器执行命令。"
-        "SSH 自动发现 <私钥名>-cert.pub 证书文件。"
+        "【工作流第 2 步】使用上一步获取的 SSH 子证书连接目标服务器执行命令。\n\n"
+        "使用场景：已经用 get_sub_cert 获取了证书，现在要 SSH 到目标服务器。\n\n"
+        "执行流程：\n"
+        "  1. 传入 host（目标服务器 IP）、user（SSH 用户名）、cert_path（上一步返回的 cert_path）。\n"
+        "  2. SSH 自动发现 cert_path 同目录下的 <cert_path>-cert.pub 证书文件进行认证。\n"
+        "  3. 如果传了 command 参数，执行命令并返回结果。\n"
+        "  4. 如果不传 command，则生成 SSH 连接命令字符串供用户手动执行。\n\n"
+        "注意：\n"
+        "  - cert_path 必须是 get_sub_cert 返回的 cert_path 值。\n"
+        "  - 如果希望执行交互式命令，可以不传 command 参数，让用户手动 SSH。"
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "host": {
                 "type": "string",
-                "description": "目标服务器 IP 或主机名",
+                "description": "【必填】目标服务器 IP 地址或主机名。例：'192.168.1.100'、'myserver.example.com'",
             },
             "user": {
                 "type": "string",
-                "description": "SSH 用户名",
+                "description": "【必填】SSH 登录用户名。必须与 get_sub_cert 时传入的 user_name 一致（或由服务器默认决定）。例：'root'、'ubuntu'",
             },
             "cert_path": {
                 "type": "string",
-                "description": "SSH 私钥路径（get_sub_cert 返回的 cert_path）",
+                "description": "【必填】SSH 私钥文件的完整路径。就是 get_sub_cert 返回结果中的 cert_path 字段值。例：'/home/user/.hermes/certs/web-server'。SSH 会自动读取同目录下的 web-server-cert.pub 作为证书。",
             },
             "command": {
                 "type": "string",
-                "description": "要执行的远程命令（为空则生成 SSH 命令）",
+                "description": "【选填】要在远程服务器上执行的命令。如果为空则只生成 SSH 连接命令字符串。例如想查看服务器信息：'uname -a && df -h'",
             },
             "port": {
                 "type": "integer",
-                "description": "SSH 端口（默认 22）",
+                "description": "【选填】SSH 端口号。默认 22。如果目标服务器使用非标端口需要指定。",
                 "default": 22,
             },
         },
@@ -383,7 +403,7 @@ def register(ctx) -> None:
         toolset="custom",
         schema=SCHEMA_GET_SUB_CERT,
         handler=_handle_get_sub_cert,
-        description="🔐 通过 TOTP 从 CA 服务器获取 SSH 子证书",
+        description="🔐 【工作流第1步】获取TOTP码→CA签发SSH子证书→保存到~/.hermes/certs/。先问用户要TOTP验证码，返回的cert_path用于下一步ssh_with_cert",
         emoji="🔐",
     )
     ctx.register_tool(
@@ -391,6 +411,6 @@ def register(ctx) -> None:
         toolset="custom",
         schema=SCHEMA_SSH_WITH_CERT,
         handler=_handle_ssh_with_cert,
-        description="🔑 用 SSH 子证书连接服务器执行命令",
+        description="🔑 【工作流第2步】用get_sub_cert获取的证书SSH登录目标服务器。传入cert_path（上一步返回值）+host+user+command",
         emoji="🔑",
     )
