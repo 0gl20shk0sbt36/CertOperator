@@ -24,7 +24,7 @@ import (
 	"github.com/cert-operator/ca-server/v2/internal/totp"
 )
 
-const VERSION = "2.1.0"
+const VERSION = "2.2.0"
 
 var configPath string
 
@@ -64,6 +64,8 @@ func main() {
 		cmdGroups(args)
 	case "renew-cert":
 		cmdRenewCert()
+	case "reset":
+		cmdReset(args)
 	case "version":
 		fmt.Printf("cert-operator v%s\n", VERSION)
 	default:
@@ -88,6 +90,7 @@ Commands:
   totp [--verify|--regenerate]  TOTP management (default group)
   groups [action] [args]   Group management (see "groups --help")
   renew-cert               Regenerate HTTPS certificate
+  reset <mode>             Reset components (ca|https|client|totp <grp>|group <grp>|all)
   version                  Show version
 
 Use "ca-server <command> --help" for more information.
@@ -833,4 +836,102 @@ func orEmpty(s string) string {
 		return "(empty)"
 	}
 	return s
+}
+
+func cmdReset(args []string) {
+	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
+		fmt.Fprintln(os.Stderr, "Usage: ca-server reset <mode> [args]")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Modes:")
+		fmt.Fprintln(os.Stderr, "  ca              Regenerate CA key pair (invalidates all SSH certs!)")
+		fmt.Fprintln(os.Stderr, "  https           Regenerate HTTPS/TLS certificate")
+		fmt.Fprintln(os.Stderr, "  client          Regenerate mTLS client cert + deploy.sh")
+		fmt.Fprintln(os.Stderr, "  totp <group>    Reset TOTP secret for a group")
+		fmt.Fprintln(os.Stderr, "  group <name>    Reset group config to empty defaults")
+		fmt.Fprintln(os.Stderr, "  all             Full re-init (deletes everything!)")
+		return
+	}
+
+	cfg := mustLoadConfig()
+
+	switch args[0] {
+	case "ca":
+		if err := ca.ResetCA(cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "❌ Reset CA failed: %v\n", err)
+			os.Exit(1)
+		}
+	case "https":
+		if err := ca.ResetHTTPS(cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "❌ Reset HTTPS failed: %v\n", err)
+			os.Exit(1)
+		}
+		// Also update deploy.sh since HTTPS cert changed
+		if err := ca.ResetClient(cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "❌ Update deploy.sh failed: %v\n", err)
+			os.Exit(1)
+		}
+	case "client":
+		if err := ca.ResetClient(cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "❌ Reset client failed: %v\n", err)
+			os.Exit(1)
+		}
+	case "totp":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: ca-server reset totp <group-name>")
+			os.Exit(1)
+		}
+		groupName := args[1]
+		if _, ok := cfg.Groups[groupName]; !ok {
+			fmt.Fprintf(os.Stderr, "❌ Group '%s' not found\n", groupName)
+			os.Exit(1)
+		}
+		secret := totp.GenerateSecret()
+		g := cfg.Groups[groupName]
+		g.TOTPSecret = secret
+		cfg.Groups[groupName] = g
+		_ = cfg.Save()
+		fmt.Printf("✅ TOTP secret reset for group '%s'\n", groupName)
+		fmt.Printf("   Secret: %s\n", secret)
+		fmt.Printf("   Now  : %s\n", totp.Now(secret))
+	case "group":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: ca-server reset group <group-name>")
+			os.Exit(1)
+		}
+		groupName := args[1]
+		g, ok := cfg.Groups[groupName]
+		if !ok {
+			fmt.Fprintf(os.Stderr, "❌ Group '%s' not found\n", groupName)
+			os.Exit(1)
+		}
+		g.AllowedUsers = ""
+		g.ValidityMinutes = 0
+		g.Frozen = nil
+		g.Parent = ""
+		g.Extensions = nil
+		// Keep TOTP secret (use reset totp to regenerate)
+		cfg.Groups[groupName] = g
+		_ = cfg.Save()
+		fmt.Printf("✅ Group '%s' config reset to defaults (TOTP secret kept)\n", groupName)
+	case "all":
+		fmt.Println("⚠️  This will DELETE all data and re-initialize!")
+		fmt.Println("    All issued SSH certs will be invalidated.")
+		fmt.Println("    All TOTP secrets will be regenerated.")
+		fmt.Println("    All groups will be cleared.")
+		fmt.Print("    Continue? (yes/no): ")
+		var confirm string
+		fmt.Scanln(&confirm)
+		if confirm != "yes" {
+			fmt.Println("Cancelled.")
+			return
+		}
+		if err := ca.ResetAll(cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "❌ Reset all failed: %v\n", err)
+			os.Exit(1)
+		}
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown reset mode: %s\n", args[0])
+		fmt.Fprintln(os.Stderr, "Valid modes: ca, https, client, totp <group>, group <name>, all")
+		os.Exit(1)
+	}
 }

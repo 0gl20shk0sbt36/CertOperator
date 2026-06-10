@@ -137,6 +137,154 @@ func Init(cfg *config.Config) error {
 	return nil
 }
 
+// ResetCA regenerates the CA key pair, invalidating all issued SSH certificates.
+func ResetCA(cfg *config.Config) error {
+	caKeyPath := filepath.Join(dataDir(cfg), "ca_key")
+	caKeyPubPath := filepath.Join(dataDir(cfg), "ca_key.pub")
+
+	if err := generateCAKey(caKeyPath, caKeyPubPath); err != nil {
+		return err
+	}
+	fmt.Printf("   ✅ CA key:  %s\n", caKeyPath)
+	fmt.Printf("   ✅ CA pub:  %s\n", caKeyPubPath)
+	fmt.Println("   ⚠️  所有已签发的 SSH 证书立即失效！")
+	return nil
+}
+
+// ResetHTTPS regenerates the HTTPS (TLS) certificate only.
+// Existing client ca-https-cert.pem files must be re-deployed.
+func ResetHTTPS(cfg *config.Config) error {
+	httpsKeyPath := filepath.Join(dataDir(cfg), "https_key.pem")
+	httpsCertPath := filepath.Join(dataDir(cfg), "https_cert.pem")
+
+	if err := generateHTTPSCert(httpsKeyPath, httpsCertPath); err != nil {
+		return err
+	}
+	fmt.Printf("   ✅ HTTPS key:  %s\n", httpsKeyPath)
+	fmt.Printf("   ✅ HTTPS cert: %s\n", httpsCertPath)
+	fmt.Println("   ⚠️  所有客户端需要重新运行 deploy.sh！")
+	return nil
+}
+
+// ResetClient regenerates the mTLS client cert + deploy script.
+func ResetClient(cfg *config.Config) error {
+	clientKeyPath := filepath.Join(dataDir(cfg), "client.key")
+	clientCertPath := filepath.Join(dataDir(cfg), "client.cert")
+	distDir := filepath.Join(dataDir(cfg), "dist")
+	httpsCertPath := filepath.Join(dataDir(cfg), "https_cert.pem")
+
+	if err := generateClientCert(clientKeyPath, clientCertPath); err != nil {
+		return err
+	}
+	fmt.Printf("   ✅ Client key:  %s\n", clientKeyPath)
+	fmt.Printf("   ✅ Client cert: %s\n", clientCertPath)
+
+	if err := generateDeployScript(distDir, httpsCertPath, clientCertPath, clientKeyPath); err != nil {
+		return fmt.Errorf("deploy script: %w", err)
+	}
+	fmt.Printf("   ✅ Deploy script: %s\n", filepath.Join(distDir, "deploy.sh"))
+	return nil
+}
+
+// ResetAll deletes everything and re-runs Init.
+func ResetAll(cfg *config.Config) error {
+	d := dataDir(cfg)
+	if err := os.RemoveAll(d); err != nil {
+		return fmt.Errorf("remove data dir: %w", err)
+	}
+	return Init(cfg)
+}
+
+// generateCAKey creates an ed25519 CA key pair.
+func generateCAKey(caKeyPath, caKeyPubPath string) error {
+	cmd := exec.Command("ssh-keygen",
+		"-t", "ed25519",
+		"-f", caKeyPath,
+		"-N", "",
+		"-C", "ca-server@cert-operator",
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("ssh-keygen: %s: %w", strings.TrimSpace(string(out)), err)
+	}
+	if err := os.Chmod(caKeyPath, 0600); err != nil {
+		return err
+	}
+	if err := os.Chmod(caKeyPubPath, 0644); err != nil {
+		return err
+	}
+	return nil
+}
+
+// generateHTTPSCert creates a self-signed HTTPS certificate.
+func generateHTTPSCert(httpsKeyPath, httpsCertPath string) error {
+	san := "DNS:localhost,IP:127.0.0.1"
+	cmd := exec.Command("openssl",
+		"req", "-newkey", "ed25519",
+		"-days", "3650",
+		"-x509",
+		"-nodes",
+		"-keyout", httpsKeyPath,
+		"-out", httpsCertPath,
+		"-subj", "/CN=CertOperator/O=CertOperator/C=CN",
+		"-addext", fmt.Sprintf("subjectAltName=%s", san),
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("openssl: %s: %w", strings.TrimSpace(string(out)), err)
+	}
+	os.Chmod(httpsKeyPath, 0600)
+	os.Chmod(httpsCertPath, 0644)
+	return nil
+}
+
+// generateClientCert creates an ed25519 mTLS client key + self-signed cert.
+func generateClientCert(clientKeyPath, clientCertPath string) error {
+	cmd := exec.Command("openssl",
+		"req", "-newkey", "ed25519",
+		"-days", "3650",
+		"-nodes",
+		"-x509",
+		"-keyout", clientKeyPath,
+		"-out", clientCertPath,
+		"-subj", "/CN=CertOperatorClient/O=CertOperator/C=CN",
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("openssl client: %s: %w", strings.TrimSpace(string(out)), err)
+	}
+	os.Chmod(clientKeyPath, 0600)
+	os.Chmod(clientCertPath, 0644)
+	return nil
+}
+
+func generateDeployScript(distDir, httpsCertPath, clientCertPath, clientKeyPath string) error {
+	if err := os.MkdirAll(distDir, 0755); err != nil {
+		return err
+	}
+
+	httpsPEM, _ := os.ReadFile(httpsCertPath)
+	clientPEM, _ := os.ReadFile(clientCertPath)
+	clientKeyPEM, _ := os.ReadFile(clientKeyPath)
+
+	httpsB64 := base64.StdEncoding.EncodeToString(httpsPEM)
+	clientCertB64 := base64.StdEncoding.EncodeToString(clientPEM)
+	clientKeyB64 := base64.StdEncoding.EncodeToString(clientKeyPEM)
+
+	script := fmt.Sprintf(`#!/bin/bash
+set -euo pipefail
+CERT_DIR="${HOME}/.hermes/certs"
+mkdir -p "$CERT_DIR"
+echo '📦 Deploying client certificates to ' "$CERT_DIR"
+echo '%s' | base64 -d > "$CERT_DIR/ca-https-cert.pem"
+chmod 644 "$CERT_DIR/ca-https-cert.pem"
+echo '%s' | base64 -d > "$CERT_DIR/client.cert"
+chmod 644 "$CERT_DIR/client.cert"
+echo '%s' | base64 -d > "$CERT_DIR/client.key"
+chmod 600 "$CERT_DIR/client.key"
+echo '✅ Deployment complete!'
+`, httpsB64, clientCertB64, clientKeyB64)
+
+	return os.WriteFile(filepath.Join(distDir, "deploy.sh"), []byte(script), 0755)
+}
+
 // Pubkey returns the CA public key as a trimmed string.
 func Pubkey(cfg *config.Config) (string, error) {
 	caPubPath := filepath.Join(dataDir(cfg), "ca_key.pub")
@@ -268,7 +416,7 @@ func runOut(name string, args ...string) {
 	}
 }
 
-func generateClientCert(clientKeyPath, clientCertPath string) error {
+func _unused_generateClientCert(clientKeyPath, clientCertPath string) error {
 	fmt.Println("🔨 Generating client mTLS certificate...")
 	runOut("openssl", "ecparam", "-genkey", "-name", "prime256v1",
 		"-out", clientKeyPath,
@@ -286,7 +434,7 @@ func generateClientCert(clientKeyPath, clientCertPath string) error {
 	return nil
 }
 
-func generateDeployScript(distDir, httpsCertPath, clientCertPath, clientKeyPath string) error {
+func _unused_generateDeployScript(distDir, httpsCertPath, clientCertPath, clientKeyPath string) error {
 	if err := os.MkdirAll(distDir, 0755); err != nil {
 		return err
 	}
