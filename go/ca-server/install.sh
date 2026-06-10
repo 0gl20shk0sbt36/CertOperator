@@ -20,7 +20,8 @@ for arg in "$@"; do
     case "$arg" in --clean) CLEAN=1 ;; esac
 done
 
-# 如果存在旧安装，先清理再重装（兼容旧版 uninstall 无 --yes 的情况）
+# 如果存在旧安装，先清理再重装（备份 config.json，兼容旧版 uninstall 无 --yes 的情况）
+CONFIG_BAK=""
 if [[ -d "$INSTALL_DIR" ]]; then
     if [[ "$CLEAN" -eq 1 ]]; then
         info "检测到旧安装，执行完全清理..."
@@ -32,6 +33,11 @@ if [[ -d "$INSTALL_DIR" ]]; then
         userdel -r "$SERVICE_USER" 2>/dev/null || userdel "$SERVICE_USER" 2>/dev/null || true
     else
         info "检测到旧安装，执行保留数据清理..."
+        # 备份 config.json（旧版 uninstall 可能会删掉它）
+        if [[ -f "$INSTALL_DIR/config.json" ]]; then
+            CONFIG_BAK=$(mktemp)
+            cp "$INSTALL_DIR/config.json" "$CONFIG_BAK"
+        fi
         # 尽量调用旧卸载脚本（可能不支持 --yes，失败则手动清理）
         if grep -q -- "--yes" "$INSTALL_DIR/uninstall.sh" 2>/dev/null; then
             bash "$INSTALL_DIR/uninstall.sh" --yes --keep-data
@@ -75,8 +81,12 @@ SHORTCUT
 chmod 755 /usr/local/bin/cert-operator
 info "快捷命令: cert-operator → sudo -u cert-operator /opt/ca_server/bin/ca-server"
 
-# 创建默认配置
-if [[ ! -f "$INSTALL_DIR/config.json" ]]; then
+# 创建默认配置（如果没被备份恢复，则新建）
+if [[ -n "$CONFIG_BAK" && -f "$CONFIG_BAK" ]]; then
+    mv "$CONFIG_BAK" "$INSTALL_DIR/config.json"
+    chown "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR/config.json"
+    info "配置文件已恢复（来自卸载前的备份）"
+elif [[ ! -f "$INSTALL_DIR/config.json" ]]; then
     LOCAL_IPS=""
     if command -v ip &>/dev/null; then
         LOCAL_IPS=$(ip -4 addr show 2>/dev/null | grep -oP 'inet \K[\d.]+' | grep -v '127.0.0.1' | tr '\n' ',' | sed 's/,$//')
