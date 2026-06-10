@@ -82,7 +82,7 @@ Type=simple
 User=$SERVICE_USER
 Group=$SERVICE_USER
 WorkingDirectory=$INSTALL_DIR
-ExecStart=$INSTALL_DIR/bin/ca-server serve
+ExecStart=$INSTALL_DIR/bin/ca-server serve --no-mtls
 Restart=on-failure
 NoNewPrivileges=true
 
