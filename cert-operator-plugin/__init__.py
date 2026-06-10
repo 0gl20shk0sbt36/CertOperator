@@ -102,6 +102,34 @@ def _save_ssh_cert(name: str, private_key: str, cert_content: str) -> tuple[str,
     return str(key_path), str(cert_path)
 
 
+def _check_version(server: str, ca_path: str, cc: str, ck: str) -> None:
+    """检查服务端版本是否与插件版本一致。"""
+    version_url = f"{server.rstrip('/')}/api/version"
+    try:
+        if HAS_REQUESTS:
+            import requests
+            ver_resp = requests.get(version_url, verify=ca_path, cert=(cc, ck), timeout=10)
+            ver_resp.raise_for_status()
+            sv = ver_resp.json().get("version", "")
+        elif HAS_URLLIB:
+            import ssl, urllib.request, json as _json
+            ctx = ssl.create_default_context(cafile=ca_path)
+            ctx.load_cert_chain(cc, ck)
+            with urllib.request.urlopen(version_url, context=ctx, timeout=10) as vresp:
+                sv = _json.loads(vresp.read()).get("version", "")
+        else:
+            return
+        if sv and sv != PLUGIN_VERSION:
+            raise RuntimeError(
+                f"版本不匹配: 服务端 v{sv}, 插件 v{PLUGIN_VERSION}\n"
+                "请使用相同版本的 cert-operator-plugin"
+            )
+    except RuntimeError:
+        raise
+    except Exception:
+        pass  # 版本检查失败不影响后续（网络问题等）
+
+
 def _request_cert(
     server: str,
     totp_code: str,
@@ -111,16 +139,19 @@ def _request_cert(
     group_name: Optional[str] = None,
     user_name: Optional[str] = None,
 ) -> dict[str, Any]:
+    ca_path = ca_cert_path or str(DEFAULT_CA_CERT)
+    cc = client_cert or str(DEFAULT_CLIENT_CERT)
+    ck = client_key or str(DEFAULT_CLIENT_KEY)
+
+    # 版本检查：确保服务端与插件版本一致
+    _check_version(server, ca_path, cc, ck)
+
     url = f"{server.rstrip('/')}/api/get-cert"
     payload = {"totp": totp_code}
     if group_name:
         payload["group"] = group_name
     if user_name:
         payload["user"] = user_name
-
-    ca_path = ca_cert_path or str(DEFAULT_CA_CERT)
-    cc = client_cert or str(DEFAULT_CLIENT_CERT)
-    ck = client_key or str(DEFAULT_CLIENT_KEY)
 
     if HAS_REQUESTS:
         return _request_cert_requests(url, payload, ca_path, cc, ck)

@@ -153,6 +153,19 @@ func cmdGetCert(args []string) {
 		Timeout: 30 * time.Second,
 	}
 
+	// 版本号检查：确保服务端与客户端版本一致
+	verURL := strings.TrimRight(server, "/") + "/api/version"
+	if verResp, verErr := client.Get(verURL); verErr == nil {
+		var verData map[string]interface{}
+		json.NewDecoder(verResp.Body).Decode(&verData)
+		verResp.Body.Close()
+		if sv, ok := verData["version"].(string); ok && sv != VERSION {
+			fmt.Fprintf(os.Stderr, "❌ 版本不匹配: 服务端 v%s, 客户端 v%s\n", sv, VERSION)
+			fmt.Fprintf(os.Stderr, "   请使用相同版本的 cert-operator CLI\n")
+			os.Exit(1)
+		}
+	}
+
 	url := strings.TrimRight(server, "/") + "/api/get-cert"
 	resp, err := client.Post(url, "application/json", strings.NewReader(string(bodyJSON)))
 	if err != nil {
