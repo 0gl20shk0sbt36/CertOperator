@@ -328,17 +328,17 @@ SCHEMA_SSH_WITH_CERT = {
 }
 
 
-def _handle_get_sub_cert(
-    server: str,
-    totp_code: str,
-    cert_name: str,
-    ca_cert_path: Optional[str] = None,
-    client_cert: Optional[str] = None,
-    client_key: Optional[str] = None,
-    group_name: Optional[str] = None,
-    user_name: Optional[str] = None,
-) -> str:
+def _handle_get_sub_cert(params: dict) -> str:
     try:
+        server = params.get("server", "")
+        totp_code = params.get("totp_code", "")
+        cert_name = params.get("cert_name", "")
+        ca_cert_path = params.get("ca_cert_path")
+        client_cert = params.get("client_cert")
+        client_key = params.get("client_key")
+        group_name = params.get("group_name")
+        user_name = params.get("user_name")
+
         data = _request_cert(server, totp_code, ca_cert_path, client_cert, client_key, group_name, user_name)
         ssh_private_key = data.get("ssh_private_key", "")
         ssh_cert = data.get("ssh_cert", "")
@@ -376,14 +376,13 @@ def _handle_get_sub_cert(
         return json.dumps({"success": False, "error": f"{msg}{hint}"}, ensure_ascii=False)
 
 
-def _handle_ssh_with_cert(
-    host: str,
-    user: str,
-    cert_path: str,
-    command: Optional[str] = None,
-    port: int = 22,
-) -> str:
+def _handle_ssh_with_cert(params: dict) -> str:
     try:
+        host = params.get("host", "")
+        user = params.get("user", "")
+        cert_path = params.get("cert_path", "")
+        command = params.get("command")
+        port = int(params.get("port", 22))
         result = _run_ssh(host, user, cert_path, port, command)
         return json.dumps(result, ensure_ascii=False, default=str)
     except Exception as e:
