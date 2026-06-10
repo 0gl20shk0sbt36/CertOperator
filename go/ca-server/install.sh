@@ -93,6 +93,28 @@ systemctl daemon-reload
 systemctl enable "$SERVICE_NAME" 2>/dev/null || true
 info "systemd 服务已安装 ($SERVICE_NAME)"
 
+# 安装 cert-sudo-check + 配置 PAM
+SRC_CSC="$(dirname "$0")/cert-sudo-check"
+if [[ -f "$SRC_CSC" ]]; then
+    cp "$SRC_CSC" /usr/local/bin/cert-sudo-check
+    chmod +x /usr/local/bin/cert-sudo-check
+    PAM_FILE="/etc/pam.d/sudo"
+    if [[ -f "$PAM_FILE" ]] && ! grep -q "cert-sudo-check" "$PAM_FILE" 2>/dev/null; then
+        cp "$PAM_FILE" "${PAM_FILE}.bak.cert-operator.$(date +%s)"
+        HEADER=$(head -1 "$PAM_FILE")
+        {
+            echo "$HEADER"
+            echo "# cert-operator: SSH 证书扩展检查"
+            echo "auth sufficient pam_exec.so quiet /usr/local/bin/cert-sudo-check"
+            echo "auth sufficient pam_unix.so"
+            echo "auth requisite  pam_deny.so"
+            tail -n +2 "$PAM_FILE"
+        } > "${PAM_FILE}.new"
+        mv "${PAM_FILE}.new" "$PAM_FILE"
+        info "PAM sudo 已配置"
+    fi
+fi
+
 echo ""
 echo "✅ 部署完成"
 echo "   启动: systemctl start $SERVICE_NAME"
