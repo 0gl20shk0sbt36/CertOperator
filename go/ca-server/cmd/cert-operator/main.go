@@ -235,7 +235,14 @@ func cmdSSH(args []string) {
 		"-o", fmt.Sprintf("ConnectTimeout=%d", 15),
 		fmt.Sprintf("%s@%s", user, host),
 	}
-	if command != "" { sshArgs = append(sshArgs, command) }
+	if command != "" {
+		// Ubuntu 24.04+ sudo -n 不调用 PAM，cert-sudo-check 不会执行。
+		// 自动替换 sudo -n 为 sudo -S + 无效密码管道，触发 PAM。
+		// 证书含 sudo 扩展 → cert-sudo-check exit 0 → auth sufficient → sudo 放行
+		// 证书无 sudo 扩展 → cert-sudo-check exit 1 → pam_unix 拒绝无效密码 → 拒绝
+		command = strings.ReplaceAll(command, "sudo -n ", "echo 'invalid-password-420' | sudo -S ")
+		sshArgs = append(sshArgs, command)
+	}
 
 	cmd := exec.Command("ssh", sshArgs...)
 	cmd.Stdin = os.Stdin
