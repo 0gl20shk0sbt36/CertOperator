@@ -43,6 +43,7 @@
 | `cert_name` | ✅ | 文件名 | — | 标识这个证书用途，如 `web-server`。只能含字母数字和 `-_.` |
 | `group_name` | | string | `default` | 组名，决定证书中写入哪些 SSH 权限 |
 | `user_name` | | string | 服务端决定 | SSH 登录用户名（root / aibot 等） |
+| `cert_dir` | | 路径 | `~/.hermes/certs/` | 证书保存目录，可自定义路径 |
 | `ca_cert_path` | | 路径 | `~/.hermes/certs/ca-https-cert.pem` | CA 自签 HTTPS 证书（首次需配置） |
 | `client_cert` | | 路径 | `~/.hermes/certs/client.cert` | mTLS 客户端证书 |
 | `client_key` | | 路径 | `~/.hermes/certs/client.key` | mTLS 客户端私钥 |

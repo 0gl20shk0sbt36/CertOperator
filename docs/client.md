@@ -29,6 +29,11 @@ cert-operator get-cert https://192.168.1.100:8443 123456 prod-db \
 | `--client-key` | | mTLS 客户端密钥路径 |
 
 证书保存到 `~/.hermes/certs/<cert_name>`（私钥）和 `<cert_name>-cert.pub`（证书）。
+\
+证书保存目录默认 `~/.hermes/certs/`，可通过 `--cert-dir` 指定自定义路径：\
+```bash\
+cert-operator get-cert https://ca-server:8443 123456 my-key --cert-dir /tmp/certs\
+```
 
 ## SSH 登录
 
