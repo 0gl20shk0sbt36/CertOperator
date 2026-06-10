@@ -1,4 +1,4 @@
-# cert-operator 目标服务器（测试用 — 仅基础环境）
+# cert-operator target server (test)
 FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive

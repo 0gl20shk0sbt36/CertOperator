@@ -10,11 +10,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
 
-const VERSION = "2.2.0"
+const VERSION = "2.3.0"
 
 func main() {
 	if len(os.Args) < 2 || os.Args[1] == "--help" || os.Args[1] == "-h" {
@@ -224,37 +225,24 @@ func cmdSSH(args []string) {
 		}
 	}
 
+	// Load cert into SSH agent and enable forwarding for cert-sudo-check
+	cleanupAgent := tryAddToAgent(keyPath)
+	if cleanupAgent != nil {
+		defer cleanupAgent()
+	}
+
 	sshArgs := []string{
 		"-i", keyPath,
 		"-p", port,
+		"-A",
 		"-o", "StrictHostKeyChecking=accept-new",
 		"-o", fmt.Sprintf("ConnectTimeout=%d", 15),
 		fmt.Sprintf("%s@%s", user, host),
 	}
+	// sudo -n 拦截由目标服务器上的 /usr/bin/sudo wrapper 处理
+	// （通过 deploy-sudo-wrapper.sh 部署，无需客户端 mount namespace）
 	if command != "" {
-		// Ubuntu 24.04+ sudo -n 不调用 PAM。
-		// 用 PATH 覆盖注入 wrapper sudo 脚本，拦截 sudo 调用。
-		// wrapper 检测 -n → 调用 cert-sudo-check → 有证书则去掉 -n 调原 sudo。
-		// PATH 覆盖仅对当前命令生效，退出即恢复。
-		wrapper := fmt.Sprintf(`
-_TMP=$(mktemp -d)
-cat > $_TMP/su << 'SUWRP'
-#!/bin/bash
-_H=; _A=()
-for a in "$@"; do [ "$a" = "-n" ] && _H=1 || _A+=("$a"); done
-if [ -n "$_H" ] && /usr/local/bin/cert-sudo-check 2>/dev/null; then
-    exec /usr/bin/sudo "${_A[@]}"
-fi
-[ -z "$_H" ] && exec /usr/bin/sudo "$@"
-echo >&2 "sudo: needpassword"; exit 1
-SUWRP
-chmod +x $_TMP/su
-PATH=$_TMP:$PATH bash -c '%s'
-_R=$?
-rm -rf $_TMP
-exit $_R
-`, command)
-		sshArgs = append(sshArgs, wrapper)
+		sshArgs = append(sshArgs, command)
 	}
 
 	cmd := exec.Command("ssh", sshArgs...)
@@ -295,28 +283,49 @@ func cmdDeploy(args []string) {
 
 // ---- helpers ------------------------------------------------------------
 
-func tryAddToAgent(keyPath string) {
-	sock := os.Getenv("SSH_AUTH_SOCK")
-	if sock == "" || !isSocket(sock) {
-		out, err := exec.Command("ssh-agent", "-s").Output()
-		if err != nil { return }
-		for _, line := range strings.Split(string(out), "\n") {
-			if strings.HasPrefix(line, "SSH_AUTH_SOCK=") {
-				parts := strings.SplitN(line, "=", 2)
-				if len(parts) == 2 {
-					val := strings.Trim(strings.SplitN(parts[1], ";", 2)[0], "'\"")
-					os.Setenv("SSH_AUTH_SOCK", val)
+func tryAddToAgent(keyPath string) func() {
+	// 清除旧 agent 环境变量
+	os.Unsetenv("SSH_AUTH_SOCK")
+	os.Unsetenv("SSH_AGENT_PID")
+
+	// 启动新 agent，记录 PID 以便结束后清理
+	out, err := exec.Command("ssh-agent", "-s").Output()
+	if err != nil {
+		return nil
+	}
+	var agentPID int
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.HasPrefix(line, "SSH_AUTH_SOCK=") {
+			parts := strings.SplitN(line, "=", 2)
+			if len(parts) == 2 {
+				val := strings.Trim(strings.SplitN(parts[1], ";", 2)[0], "'\"")
+				os.Setenv("SSH_AUTH_SOCK", val)
+			}
+		}
+		if strings.HasPrefix(line, "SSH_AGENT_PID=") {
+			parts := strings.SplitN(line, "=", 2)
+			if len(parts) == 2 {
+				pidStr := strings.TrimSpace(strings.SplitN(parts[1], ";", 2)[0])
+				if pid, err := strconv.Atoi(pidStr); err == nil {
+					agentPID = pid
 				}
 			}
 		}
 	}
 	exec.Command("ssh-add", keyPath).Run()
-}
 
-func isSocket(path string) bool {
-	info, err := os.Stat(path)
-	if err != nil { return false }
-	return info.Mode()&os.ModeSocket != 0
+	// 返回清理函数：结束后杀死 agent
+	if agentPID > 0 {
+		return func() {
+			proc, _ := os.FindProcess(agentPID)
+			if proc != nil {
+				proc.Kill()
+			}
+			os.Unsetenv("SSH_AUTH_SOCK")
+			os.Unsetenv("SSH_AGENT_PID")
+		}
+	}
+	return nil
 }
 
 func parseFlags(args []string) map[string]string {

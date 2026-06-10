@@ -37,7 +37,7 @@ DEFAULT_TIMEOUT = 30
 DEFAULT_CA_CERT = DEFAULT_CERTS_DIR / "ca-https-cert.pem"
 DEFAULT_CLIENT_CERT = DEFAULT_CERTS_DIR / "client.cert"
 DEFAULT_CLIENT_KEY = DEFAULT_CERTS_DIR / "client.key"
-PLUGIN_VERSION = "2.2.0"
+PLUGIN_VERSION = "2.3.0"
 
 # ---------------------------------------------------------------------------
 # HTTP 请求库：优先用 requests，回退到 urllib
@@ -70,6 +70,18 @@ def _ensure_certs_dir() -> Path:
     path.mkdir(parents=True, exist_ok=True)
     path.chmod(0o700)
     return path
+
+
+def _validate_cert_name(name: str) -> str:
+    """验证 cert_name 合法性，防止路径穿越。"""
+    if not name or len(name) > 128:
+        raise ValueError("cert_name 不能为空且不超过128字符")
+    if "/" in name or "\\" in name or name in (".", "..") or name.startswith("."):
+        raise ValueError(f"cert_name 包含非法字符或路径: '{name}'")
+    allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_. ")
+    if not all(c in allowed for c in name):
+        raise ValueError(f"cert_name 只能包含字母、数字、空格和 -_. : '{name}'")
+    return name.strip().replace(" ", "_")
 
 
 def _safe_filename(name: str) -> str:
@@ -184,8 +196,32 @@ def _run_ssh(
     has_cert = cert_file.exists()
     key_file.chmod(0o600)
 
+    # 启动 ssh-agent 并将证书加载到其中
+    # 目标服务器上的 cert-sudo-check 需要通过转发的 agent socket 验证证书
+    agent_out = subprocess.run(
+        ["ssh-agent", "-s"],
+        capture_output=True, text=True, timeout=5,
+    )
+    agent_pid = None
+    if agent_out.returncode == 0:
+        for line in agent_out.stdout.split("\n"):
+            if line.startswith("SSH_AUTH_SOCK="):
+                sock = line.split("=", 1)[1].split(";", 1)[0].strip("\"'")
+                os.environ["SSH_AUTH_SOCK"] = sock
+            elif line.startswith("SSH_AGENT_PID="):
+                pid_str = line.split("=", 1)[1].split(";", 1)[0].strip()
+                try:
+                    agent_pid = int(pid_str)
+                except ValueError:
+                    pass
+    # 加载证书到 agent
+    if agent_pid:
+        subprocess.run(["ssh-add", str(key_file)], capture_output=True, timeout=5)
+
     ssh_cmd = [
-        "ssh", "-i", str(key_file),
+        "ssh",
+        "-A",  # agent forwarding: 必要，远程 cert-sudo-check 通过转发的 agent 验证证书
+        "-i", str(key_file),
         "-p", str(port),
         "-o", "StrictHostKeyChecking=accept-new",
         "-o", f"UserKnownHostsFile={DEFAULT_CERTS_DIR}/known_hosts",
@@ -193,9 +229,9 @@ def _run_ssh(
     ]
     target = f"{user}@{host}"
 
-    if command:
-        ssh_cmd.extend([target, command])
-        try:
+    try:
+        if command:
+            ssh_cmd.extend([target, command])
             result = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=120)
             output = (result.stdout + result.stderr).strip()
             return {
@@ -203,21 +239,30 @@ def _run_ssh(
                 "output": output or "(无输出)",
                 "exit_code": result.returncode,
             }
-        except subprocess.TimeoutExpired:
-            return {"success": False, "output": "SSH 连接超时", "exit_code": -1}
-        except FileNotFoundError:
-            return {"success": False, "output": "未找到 ssh 命令，请安装 OpenSSH Client", "exit_code": -1}
-        except Exception as e:
-            return {"success": False, "output": f"SSH 执行失败: {type(e).__name__}: {e}", "exit_code": -1}
-    else:
-        cmd_str = " ".join(str(x) for x in ssh_cmd) + f" {target}"
-        return {
-            "success": True,
-            "output": f"交互式 SSH 命令已生成:\n  {cmd_str}",
-            "exit_code": 0,
-            "command": cmd_str,
-            "cert_auto_discovered": has_cert,
-        }
+        else:
+            cmd_str = " ".join(str(x) for x in ssh_cmd) + f" {target}"
+            return {
+                "success": True,
+                "output": f"交互式 SSH 命令已生成:\n  {cmd_str}",
+                "exit_code": 0,
+                "command": cmd_str,
+                "cert_auto_discovered": has_cert,
+            }
+    except subprocess.TimeoutExpired:
+        return {"success": False, "output": "SSH 连接超时", "exit_code": -1}
+    except FileNotFoundError:
+        return {"success": False, "output": "未找到 ssh 命令，请安装 OpenSSH Client", "exit_code": -1}
+    except Exception as e:
+        return {"success": False, "output": f"SSH 执行失败: {type(e).__name__}: {e}", "exit_code": -1}
+    finally:
+        # 清理 agent
+        if agent_pid:
+            try:
+                os.kill(agent_pid, 15)
+            except OSError:
+                pass
+            os.environ.pop("SSH_AUTH_SOCK", None)
+            os.environ.pop("SSH_AGENT_PID", None)
 
 
 # ---------------------------------------------------------------------------
@@ -332,14 +377,25 @@ def _handle_get_sub_cert(params=None, **kwargs) -> str:
     if params is None or not isinstance(params, dict):
         params = kwargs
     try:
-        server = params.get("server", "")
-        totp_code = params.get("totp_code", "")
-        cert_name = params.get("cert_name", "")
-        ca_cert_path = params.get("ca_cert_path")
-        client_cert = params.get("client_cert")
-        client_key = params.get("client_key")
-        group_name = params.get("group_name")
-        user_name = params.get("user_name")
+        server = params.get("server", "").strip()
+        totp_code = params.get("totp_code", "").strip()
+        cert_name = params.get("cert_name", "").strip()
+
+        if not server:
+            raise ValueError("server 不能为空，请输入 CA 服务器地址")
+        if not totp_code:
+            raise ValueError("totp_code 不能为空，请先向用户索取 TOTP 验证码")
+        if not cert_name:
+            raise ValueError("cert_name 不能为空")
+        if len(totp_code) != 6 or not totp_code.isdigit():
+            raise ValueError(f"TOTP 码必须是 6 位数字，收到: '{totp_code}'")
+        cert_name = _validate_cert_name(cert_name)
+
+        ca_cert_path = params.get("ca_cert_path") or None
+        client_cert = params.get("client_cert") or None
+        client_key = params.get("client_key") or None
+        group_name = params.get("group_name") or None
+        user_name = params.get("user_name") or None
 
         data = _request_cert(server, totp_code, ca_cert_path, client_cert, client_key, group_name, user_name)
         ssh_private_key = data.get("ssh_private_key", "")
@@ -382,11 +438,27 @@ def _handle_ssh_with_cert(params=None, **kwargs) -> str:
     if params is None or not isinstance(params, dict):
         params = kwargs
     try:
-        host = params.get("host", "")
-        user = params.get("user", "")
-        cert_path = params.get("cert_path", "")
+        host = params.get("host", "").strip()
+        user = params.get("user", "").strip()
+        cert_path = params.get("cert_path", "").strip()
         command = params.get("command")
-        port = int(params.get("port", 22))
+        raw_port = params.get("port", 22)
+        if isinstance(raw_port, str):
+            raw_port = raw_port.strip()
+        try:
+            port = int(raw_port)
+        except (ValueError, TypeError):
+            raise ValueError(f"端口号必须为数字，收到: '{raw_port}'")
+        if port < 1 or port > 65535:
+            raise ValueError(f"端口号超出范围 (1-65535): {port}")
+        if not host:
+            raise ValueError("host 不能为空，请输入目标服务器地址")
+        if not user:
+            raise ValueError("user 不能为空，请输入 SSH 用户名")
+        if not cert_path:
+            raise ValueError("cert_path 不能为空，请先调用 get_sub_cert 获取证书")
+        if not Path(cert_path).exists():
+            raise ValueError(f"证书私钥文件不存在: {cert_path}，请先调用 get_sub_cert 获取证书")
         result = _run_ssh(host, user, cert_path, port, command)
         return json.dumps(result, ensure_ascii=False, default=str)
     except Exception as e:

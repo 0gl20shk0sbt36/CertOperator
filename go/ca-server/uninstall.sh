@@ -1,7 +1,10 @@
 #!/bin/bash
 # cert-operator v2 卸载脚本
 # 放在 /opt/ca_server/uninstall.sh
-# 用法: bash /opt/ca_server/uninstall.sh
+# 用法:
+#   bash uninstall.sh                # 完全卸载
+#   bash uninstall.sh --keep-data    # 保留 CA 密钥和证书
+#   bash uninstall.sh --yes          # 跳过确认（供脚本调用）
 set -euo pipefail
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
@@ -15,7 +18,6 @@ INSTALL_DIR="/opt/ca_server"
 SERVICE_NAME="cert-operator"
 SERVICE_USER="cert-operator"
 
-# --yes 跳过确认 (供 install.sh --clean 调用)
 FORCE=0
 KEEP_DATA=0
 for arg in "$@"; do
@@ -34,8 +36,13 @@ if [[ $FORCE -eq 0 ]]; then
     echo "  - 删除 /etc/systemd/system/${SERVICE_NAME}.service"
     echo "  - 删除 /usr/local/bin/cert-operator"
     echo "  - 删除 /opt/ca_server/bin/ca-server"
-    echo "  - 删除系统用户 $SERVICE_USER"
-    echo "  - 删除 $INSTALL_DIR${KEEP_DATA:+（保留数据）}"
+    if [[ $KEEP_DATA -eq 0 ]]; then
+        echo "  - 删除全部数据（CA 密钥、证书、配置）"
+        echo "  - 删除系统用户 $SERVICE_USER"
+    else
+        echo "  - 保留 /opt/ca_server/data/（CA 密钥和证书）"
+        echo "  - 保留系统用户 $SERVICE_USER"
+    fi
     echo ""
     read -r -p "确认卸载？(y/N): " confirm
     if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
@@ -57,15 +64,20 @@ fi
 rm -f /usr/local/bin/cert-operator
 info "快捷命令已删除"
 
-# 3. 删除安装目录
-if [[ $KEEP_DATA -eq 0 ]] && [[ -d "$INSTALL_DIR" ]]; then
-    info "删除 $INSTALL_DIR ..."
-    rm -rf "$INSTALL_DIR"
-    info "安装目录已删除"
+# 3. 删除安装目录（保留数据时只删 bin/、config.json、dist/）
+if [[ -d "$INSTALL_DIR" ]]; then
+    if [[ $KEEP_DATA -eq 1 ]]; then
+    rm -rf "$INSTALL_DIR/bin" "$INSTALL_DIR/dist" 2>/dev/null || true
+    rm -f "$INSTALL_DIR/uninstall.sh" 2>/dev/null || true
+        info "安装目录已清理（保留 data/）"
+    else
+        rm -rf "$INSTALL_DIR"
+        info "安装目录已删除"
+    fi
 fi
 
-# 4. 删除专用用户
-if id "$SERVICE_USER" &>/dev/null; then
+# 4. 删除专用用户（保留数据时不删用户，否则 data/ 的文件会变成孤儿）
+if [[ $KEEP_DATA -eq 0 ]] && id "$SERVICE_USER" &>/dev/null; then
     info "删除系统用户 $SERVICE_USER ..."
     userdel -r "$SERVICE_USER" 2>/dev/null || userdel "$SERVICE_USER" 2>/dev/null || true
     info "用户已删除"

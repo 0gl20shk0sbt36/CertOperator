@@ -1,0 +1,51 @@
+#!/bin/bash
+# =============================================================================
+# cert-operator sudo wrapper — 替换 /usr/bin/sudo
+#
+#  拦截 sudo -n → 调 cert-sudo-check → 通过则转发到 _sudo（去掉 -n）
+#  PAM 二次确认：_sudo 走 PAM → cert-sudo-check 再次验证 → 免密放行
+#
+#  部署: sudo bash deploy-sudo-wrapper.sh
+# =============================================================================
+
+_REAL_SUDO=/usr/bin/_sudo
+_CERT_CHECK=/usr/local/bin/cert-sudo-check
+
+# root 用户无需证书验证（root 本身已是最高权限）
+_UID=$(id -u)
+if [[ "$_UID" -eq 0 ]]; then
+    echo "${SSH_AUTH_SOCK:-}" > /tmp/.cert-sudo-sock 2>/dev/null || true
+    exec "$_REAL_SUDO" "$@"
+fi
+
+# 解析参数，单独处理 -n
+_has_n=0
+_n_args=()
+for _a in "$@"; do
+    case "$_a" in
+        -n) _has_n=1 ;;
+        -n*) echo "sudo: 不支持 -n 与其他短选项组合 ($_a)，请用独立 -n" >&2; exit 1 ;;
+        *) _n_args+=("$_a") ;;
+    esac
+done
+
+# 有 -n 标志 → 先验证证书
+if [[ "$_has_n" -eq 1 ]]; then
+    if [[ ! -x "$_CERT_CHECK" ]]; then
+        echo >&2 "sudo: cert-sudo-check not found, need password"
+        exit 1
+    fi
+    if ! "$_CERT_CHECK"; then
+        echo >&2 "sudo: need password"
+        exit 1
+    fi
+    # 验证通过 → 写 SSH_AUTH_SOCK 到文件，供 PAM 路径的 cert-sudo-check 读取
+    # （sudo -n 触发 PAM 时 env_reset 会清掉环境变量）
+    echo "${SSH_AUTH_SOCK:-}" > /tmp/.cert-sudo-sock 2>/dev/null || true
+    # 转给真正的 sudo（不带 -n）
+    exec "$_REAL_SUDO" "${_n_args[@]}"
+fi
+
+# 没有 -n → 写 socket 路径供 PAM 使用，再原样转发
+echo "${SSH_AUTH_SOCK:-}" > /tmp/.cert-sudo-sock 2>/dev/null || true
+exec "$_REAL_SUDO" "$@"

@@ -1,74 +1,102 @@
 #!/bin/bash
 # =============================================================================
-# cert-sudo-check — 检查当前 SSH 会话是否有 sudo@cert-operator 扩展
-# 通过 PAM pam_exec.so 调用，exit 0 = 允许 sudo，exit 1 = 拒绝
+# cert-sudo-check v9 — 通过 SSH_AUTH_SOCK 验证证书
+#  依赖: sudoers 已配置 Defaults env_keep += "SSH_AUTH_SOCK"
+#  exit 0 = 允许 sudo, exit 1 = 拒绝
 #
-# v7: 通过进程树找到 SSH_AUTH_SOCK（不受 sudo -n/PAM env 限制）
-#     不从 /tmp 扫描 stale socket，避免假阳性
+#  错误信息输出到 stderr，PAM 会将这些信息显示给用户
 # =============================================================================
 set -u
 
 CA_PUB_FILE="${CERT_SUDO_CA:-/opt/ca_server/data/ca_key.pub}"
 SUDO_EXT="${CERT_SUDO_EXT:-sudo@cert-operator}"
 
-get_ca_fp() {
-    [[ -f "$CA_PUB_FILE" ]] || return 1
-    ssh-keygen -lf "$CA_PUB_FILE" 2>/dev/null | awk '{print $2}'
-}
+_dbg() { echo "cert-sudo-check: $*" >&2; echo "$(date +%T) $(id -un) $*" >> /tmp/cert-sudo-check.log 2>/dev/null || true; }
 
-# 通过进程树找 SSH_AUTH_SOCK（从 sshd 进程环境读）
-find_ssh_sock() {
-    local pid="$1" p cp child max=20
-    cp=$pid; child=""
-    for ((i=0; i<max; i++)); do
-        local name
-        name=$(cat /proc/$cp/comm 2>/dev/null) || break
-        if [[ "$name" == "sshd" ]]; then
-            # sshd 的子进程（用户 shell）的环境中有 SSH_AUTH_SOCK
-            local sock
-            sock=$(cat /proc/$child/environ 2>/dev/null | tr '\0' '\n' | grep '^SSH_AUTH_SOCK=' | tail -1 | cut -d= -f2-)
-            if [[ -n "$sock" && -S "$sock" ]]; then
-                echo "$sock"
-                return 0
-            fi
-            # fallback: sshd 进程本身
-            sock=$(cat /proc/$cp/environ 2>/dev/null | tr '\0' '\n' | grep '^SSH_AUTH_SOCK=' | tail -1 | cut -d= -f2-)
-            if [[ -n "$sock" && -S "$sock" ]]; then
-                echo "$sock"
-                return 0
-            fi
-        fi
-        p=$(cat /proc/$cp/status 2>/dev/null | awk '/^PPid:/{print $2}') || break
-        [[ -z "$p" || "$p" == "0" ]] && break
-        child=$cp
-        cp=$p
-    done
-    return 1
+get_ca_fp() {
+    if [[ ! -f "$CA_PUB_FILE" ]]; then
+        _dbg "CA 公钥文件不存在: $CA_PUB_FILE"
+        return 1
+    fi
+    local fp
+    fp=$(ssh-keygen -lf "$CA_PUB_FILE" 2>/dev/null | awk '{print $2}')
+    if [[ -z "$fp" ]]; then
+        _dbg "无法读取 CA 公钥指纹: $CA_PUB_FILE"
+        return 1
+    fi
+    echo "$fp"
 }
 
 check_sock() {
-    local sock="$1" ca_fp="$2" data line tmp
+    local sock="$1" ca_fp="$2" data line tmp cert_count=0 matched=0
+    if [[ ! -S "$sock" ]]; then
+        _dbg "socket 不存在或不可用: $sock"
+        return 1
+    fi
     set +e
     data=$(SSH_AUTH_SOCK="$sock" ssh-add -L 2>/dev/null)
-    [[ $? -ne 0 || -z "$data" ]] && return 1
+    local rc=$?; set -e
+    if [[ $rc -ne 0 || -z "$data" ]]; then
+        _dbg "ssh-add -L 失败，agent 中可能没有证书 (exit=$rc)"
+        return 1
+    fi
+
     while IFS= read -r line || [[ -n "$line" ]]; do
         [[ -z "$line" ]] && continue
-        echo "$line" | grep -q "cert-v01@openssh.com" || continue
+        if ! echo "$line" | grep -q "cert-v01@openssh.com"; then
+            continue
+        fi
+        cert_count=$((cert_count + 1))
         tmp=$(mktemp) || continue
         echo "$line" > "$tmp"
         local info
         info=$(ssh-keygen -L -f "$tmp" 2>/dev/null)
         rm -f "$tmp"
-        [[ -z "$info" ]] && continue
-        echo "$info" | grep -q "$ca_fp" || continue
-        echo "$info" | grep -q "$SUDO_EXT" && return 0
+        if [[ -z "$info" ]]; then
+            _dbg "证书 #$cert_count: ssh-keygen -L 解析失败"
+            continue
+        fi
+        if ! echo "$info" | grep -q "$ca_fp"; then
+            _dbg "证书 #$cert_count: CA 指纹不匹配 (期望 $ca_fp)"
+            continue
+        fi
+        if ! echo "$info" | grep -q "$SUDO_EXT"; then
+            local principals
+            principals=$(echo "$info" | grep "Principals:" -A 5 | head -2 | tr '\n' ' ')
+            _dbg "证书 #$cert_count: 无 $SUDO_EXT 扩展 (principals: $principals)"
+            continue
+        fi
+        matched=1
+        break
     done <<< "$data"
-    return 1
+
+    if [[ $matched -eq 0 ]]; then
+        _dbg "共检查 $cert_count 个证书，无一匹配 $SUDO_EXT"
+        return 1
+    fi
+    return 0
 }
 
 # ---- Main ----
 CA_FP=$(get_ca_fp) || exit 1
 
-SOCK=$(find_ssh_sock "$$") || exit 1
-check_sock "$SOCK" "$CA_FP" && exit 0
+# 1. 快速路径: 环境变量 SSH_AUTH_SOCK
+SOCK="${SSH_AUTH_SOCK:-}"
+if [[ -n "$SOCK" && -S "$SOCK" ]]; then
+    check_sock "$SOCK" "$CA_FP" && exit 0
+fi
+
+# 2. 文件兜底: wrapper 写入的临时文件
+if [[ -f /tmp/.cert-sudo-sock ]]; then
+    SOCK=$(cat /tmp/.cert-sudo-sock 2>/dev/null)
+    if [[ -n "$SOCK" && -S "$SOCK" ]]; then
+        check_sock "$SOCK" "$CA_FP" && exit 0
+    else
+        _dbg "/tmp/.cert-sudo-sock 内容无效: '${SOCK:-空}'"
+    fi
+else
+    _dbg "SSH_AUTH_SOCK 未设置且 /tmp/.cert-sudo-sock 不存在"
+fi
+
+_dbg "验证失败 — 请确认: ssh -A 已启用 agent forwarding"
 exit 1

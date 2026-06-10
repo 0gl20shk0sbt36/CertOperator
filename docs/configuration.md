@@ -42,19 +42,17 @@ CA 服务器的配置文件，位于 `/opt/ca_server/config.json`。
 | `totp.issuer` | string | `CertOperator` | TOTP 签发者名称 |
 | `totp.account` | string | `admin` | TOTP 账户名称 |
 
-### SAN 配置示例
+### SAN 配置
 
-更新 HTTPS 证书的 SAN 以允许更多地址访问：
+install.sh 会自动检测服务器 IP（本地 + 公网）并写入 SAN。
+安装后可通过命令更新 SAN：
 
-```json
-{
-  "server": {
-    "san": "DNS:ca.example.com,IP:192.168.1.100,IP:10.0.0.1"
-  }
-}
+```bash
+cert-operator renew-cert --san "DNS:ca.example.com,IP:192.168.1.100,IP:10.0.0.1"
 ```
 
-修改后运行 `ca-server renew-cert` 重新生成证书。
+这会同时更新 config.json 和重新生成 HTTPS 证书。
+只重签证书不改配置：`cert-operator renew-cert`（使用 config.json 中的 san 值）。
 
 ## 组配置
 

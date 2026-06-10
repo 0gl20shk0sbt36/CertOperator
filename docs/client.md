@@ -57,6 +57,26 @@ cert-operator ssh 192.168.1.100 root ~/.hermes/certs/prod-db --port 2222
 | `--port` | | SSH 端口（默认 22） |
 | `--expires-at` | | 证书过期时间，连接前检查 |
 
+## 内部行为
+
+`cert-operator ssh` 自动处理以下逻辑：
+
+1. 启动新 ssh-agent（每次独立进程）
+2. 用 `ssh-add` 加载证书到 agent
+3. 用 `-A` 参数 SSH 连接（agent 转发供远程 cert-sudo-check 验证证书）
+4. 远程 `sudo -n` 由目标服务器上的 sudo-wrapper 拦截处理
+5. 命令结束后杀死 ssh-agent（无残留）
+
+不需要用户手动管理 agent。
+
+## Sudo 权限
+
+远程 `sudo -n` 和 `sudo` 都支持免密码：
+
+- 证书含 `sudo@cert-operator` 扩展 → 自动免密码
+- 证书不含该扩展 → sudo 需要密码
+- 无证书（仅密钥认证）→ sudo 需要密码
+
 ## 工作流示例
 
 ```bash
@@ -72,4 +92,15 @@ cert-operator get-cert https://ca.internal:8443 482901 prod-db \
 # 2. SSH 连接
 cert-operator ssh prod-db.internal root /home/user/.hermes/certs/prod-db \
   "uptime && df -h"
+
+# 3. 带 sudo
+cert-operator ssh prod-db.internal root /home/user/.hermes/certs/prod-db \
+  "sudo systemctl status nginx"
+```
+
+## 版本
+
+```bash
+cert-operator version
+# cert-operator v2.3.0
 ```

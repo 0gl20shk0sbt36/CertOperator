@@ -24,7 +24,7 @@ import (
 	"github.com/cert-operator/ca-server/v2/internal/totp"
 )
 
-const VERSION = "2.2.0"
+var versionStr = server.Version()
 
 var configPath string
 
@@ -63,11 +63,11 @@ func main() {
 	case "groups":
 		cmdGroups(args)
 	case "renew-cert":
-		cmdRenewCert()
+		cmdRenewCert(args)
 	case "reset":
 		cmdReset(args)
 	case "version":
-		fmt.Printf("cert-operator v%s\n", VERSION)
+		fmt.Printf("cert-operator v%s\n", versionStr)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", cmd)
 		printUsage()
@@ -94,7 +94,7 @@ Commands:
   version                  Show version
 
 Use "ca-server <command> --help" for more information.
-`, VERSION)
+`, versionStr)
 }
 
 func printGroupsHelp() {
@@ -113,7 +113,7 @@ Usage:
   ca-server groups config <name> set <key> <value>            Set group config
 
 Keys for "config set": sudo, frozen, validity-minutes, parent, allowed-users
-`, VERSION)
+`, versionStr)
 }
 
 func _legacy_printUsage() {
@@ -145,7 +145,7 @@ Serve flags:
   --port PORT     Listen port (default: config.yaml or 8443)
   --no-mtls       Disable mTLS (default: enabled)
   --debug         Enable debug logging
-`, VERSION)
+`, versionStr)
 }
 
 // ---------------------------------------------------------------------------
@@ -740,12 +740,29 @@ func cmdGroups(args []string) {
 // renew-cert
 // ---------------------------------------------------------------------------
 
-func cmdRenewCert() {
+func cmdRenewCert(args []string) {
+	sanArg := ""
+	for i, a := range args {
+		if a == "--san" && i+1 < len(args) {
+			sanArg = args[i+1]
+		}
+	}
 	cfg := mustLoadConfig()
+	if sanArg != "" {
+		// 更新配置文件中的 SAN
+		fmt.Printf("   SAN: %s\n", sanArg)
+		cfg.Server.SAN = sanArg
+		if err := cfg.Save(); err != nil {
+			fmt.Fprintf(os.Stderr, "❌ 保存配置失败: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("   ✅ config.json 已更新")
+	}
 	if err := ca.RenewCert(cfg); err != nil {
 		fmt.Fprintf(os.Stderr, "❌ %v\n", err)
 		os.Exit(1)
 	}
+	fmt.Println("   ⚠️  客户端需重新运行 deploy.sh 获取新证书")
 }
 
 // ---------------------------------------------------------------------------

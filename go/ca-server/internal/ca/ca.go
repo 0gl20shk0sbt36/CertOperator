@@ -33,7 +33,7 @@ func Init(cfg *config.Config) error {
 	serialPath := filepath.Join(dataDir(cfg), "serial.txt")
 	distDir := filepath.Join(dataDir(cfg), "dist")
 
-	if err := os.MkdirAll(dataDir(cfg), 0700); err != nil {
+	if err := os.MkdirAll(dataDir(cfg), 0755); err != nil {
 		return fmt.Errorf("create data dir: %w", err)
 	}
 
@@ -483,10 +483,12 @@ echo "   HTTPS cert: $CERT_DIR/ca-https-cert.pem"
 echo "   Client cert: $CERT_DIR/client.cert"
 echo "   Client key:  $CERT_DIR/client.key"
 echo ""
-echo "Parameters needed for get_sub_cert:"
-echo "  ca_cert_path=$CERT_DIR/ca-https-cert.pem"
-echo "  client_cert=$CERT_DIR/client.cert"
-echo "  client_key=$CERT_DIR/client.key"
+echo "CA server connection:"
+echo "  CA server address was NOT included in deploy.sh"
+echo "  Ask your admin for the CA server IP address."
+echo "  Then use:"
+echo "    get_sub_cert(server='https://<CA_SERVER_IP>:8443', ...)"
+echo "    cert-operator get-cert https://<CA_SERVER_IP>:8443 ..."
 `, httpsB64, clientCertB64, clientKeyB64)
 
 	deployPath := filepath.Join(distDir, "deploy.sh")
