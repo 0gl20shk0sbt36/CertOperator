@@ -21,4 +21,4 @@ release/
 .DS_Store
 Thumbs.db
 .deepseek/state/
-ca_server/cert-sudo-check.v1
+go/ca-server/bin/

@@ -27,6 +27,7 @@ tar -czf "$TMP_TAR" \
     --exclude="ca_server/dist" \
     --exclude="ca_server/__pycache__" \
     --exclude="ca_server/.venv" \
+    --exclude="ca_server/*.v1" \
     -C "$(dirname "$CA_SERVER_DIR")" \
     ca_server/
 
