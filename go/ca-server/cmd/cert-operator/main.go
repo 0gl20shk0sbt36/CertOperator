@@ -224,9 +224,13 @@ func cmdSSH(args []string) {
 		}
 	}
 
+	// SSH agent: load cert for agent forwarding (needed by cert-sudo-check)
+	tryAddToAgent(keyPath)
+
 	sshArgs := []string{
 		"-i", keyPath,
 		"-p", port,
+		"-A",
 		"-o", "StrictHostKeyChecking=accept-new",
 		"-o", fmt.Sprintf("ConnectTimeout=%d", 15),
 		fmt.Sprintf("%s@%s", user, host),
@@ -270,6 +274,30 @@ func cmdDeploy(args []string) {
 }
 
 // ---- helpers ------------------------------------------------------------
+
+func tryAddToAgent(keyPath string) {
+	sock := os.Getenv("SSH_AUTH_SOCK")
+	if sock == "" || !isSocket(sock) {
+		out, err := exec.Command("ssh-agent", "-s").Output()
+		if err != nil { return }
+		for _, line := range strings.Split(string(out), "\n") {
+			if strings.HasPrefix(line, "SSH_AUTH_SOCK=") {
+				parts := strings.SplitN(line, "=", 2)
+				if len(parts) == 2 {
+					val := strings.Trim(strings.SplitN(parts[1], ";", 2)[0], "'\"")
+					os.Setenv("SSH_AUTH_SOCK", val)
+				}
+			}
+		}
+	}
+	exec.Command("ssh-add", keyPath).Run()
+}
+
+func isSocket(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil { return false }
+	return info.Mode()&os.ModeSocket != 0
+}
 
 func parseFlags(args []string) map[string]string {
 	flags := make(map[string]string)
