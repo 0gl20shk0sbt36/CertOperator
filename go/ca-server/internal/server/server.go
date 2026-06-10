@@ -31,9 +31,13 @@ import (
 )
 
 const (
-	version = "2.1.0"
-	name    = "cert-operator"
+	// Version embedded at build time; overridden by ldflags or main.go's VERSION.
+	BuiltVersion = "2.1.0"
+	name         = "cert-operator"
 )
+
+// Version returns the server version string.
+func Version() string { return BuiltVersion }
 
 // Server is the HTTPS + mTLS API server.
 type Server struct {
@@ -108,7 +112,7 @@ func (s *Server) Serve() error {
 	}
 
 	rl := cfg.RateLimit
-	log.Printf("cert-operator v%s — serving on https://%s", version, addr)
+	log.Printf("cert-operator v%s — serving on https://%s", Version(), addr)
 	log.Printf("  CA ready: %v", s.caReady())
 	log.Printf("  rate limit: %d/%ds", rl.MaxAttempts, rl.WindowSeconds)
 	if s.NoMTLS {
@@ -433,7 +437,7 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"version": version,
+		"version": Version(),
 		"name":    name,
 	})
 }
