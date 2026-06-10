@@ -12,9 +12,7 @@ _REAL_SUDO=/usr/bin/_sudo
 _CERT_CHECK=/usr/local/bin/cert-sudo-check
 
 # root 用户无需证书验证（root 本身已是最高权限）
-_UID=$(id -u)
-if [[ "$_UID" -eq 0 ]]; then
-    echo "${SSH_AUTH_SOCK:-}" > /tmp/.cert-sudo-sock 2>/dev/null || true
+if [[ "$(id -u)" -eq 0 ]]; then
     exec "$_REAL_SUDO" "$@"
 fi
 
@@ -46,6 +44,7 @@ if [[ "$_has_n" -eq 1 ]]; then
     exec "$_REAL_SUDO" "${_n_args[@]}"
 fi
 
-# 没有 -n → 写 socket 路径供 PAM 使用，再原样转发
+# 没有 -n → 写 sock 文件供 PAM 使用，再转发
+# 用 || true 因为 cert-operator 用户可能无写权限（静默跳过）
 echo "${SSH_AUTH_SOCK:-}" > /tmp/.cert-sudo-sock 2>/dev/null || true
 exec "$_REAL_SUDO" "$@"
