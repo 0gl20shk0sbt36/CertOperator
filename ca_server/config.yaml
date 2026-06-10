@@ -1,25 +1,13 @@
 ca:
   key_type: ed25519
   validity_minutes: 60
-groups:
-  default:
-    allowed_users: root
-    totp_secret: A6ZYALIV6KYL3DJTF4NNOEQNT6FT4P3I
-    validity_minutes: 60
-  test:
-    allowed_users: root
-    extensions:
-      sudo: 'yes'
-    frozen: true
-    parent: default
-    validity_minutes: 30
-rate_limit:
-  max_attempts: 5
-  window_seconds: 300
 server:
   host: 0.0.0.0
   port: 8443
   san: ''
+rate_limit:
+  max_attempts: 5
+  window_seconds: 300
 totp:
-  account: admin
   issuer: CertOperator
+  account: admin
