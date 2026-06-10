@@ -112,8 +112,12 @@ CFG
     info "默认配置已创建: $INSTALL_DIR/config.json"
 fi
 
-# 提示用户手动 init
-info "CA 未初始化，请手动执行: cert-operator init"
+# 检查 CA 是否已初始化，未初始化则提示
+if [[ -f "$INSTALL_DIR/data/ca_key" ]]; then
+    info "CA 密钥已存在（data/ 保留完好）"
+else
+    info "CA 未初始化，请手动执行: cert-operator init"
+fi
 
 # 拷贝卸载脚本
 SRC_UNINSTALL="$(dirname "$0")/uninstall.sh"
