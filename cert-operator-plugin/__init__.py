@@ -366,7 +366,7 @@ SCHEMA_GET_SUB_CERT = {
         "properties": {
             "server": {
                 "type": "string",
-                "description": "【必填】CA 服务器地址，格式 'https://<IP>:8443'。例如 'https://121.196.206.66:8443'",
+                "description": "【必填】CA 服务器地址，格式 'https://<IP>:8443'。例如 'https://ca-server:8443'",
             },
             "totp_code": {
                 "type": "string",

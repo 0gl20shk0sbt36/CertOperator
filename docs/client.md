@@ -109,11 +109,11 @@ cert-operator version
 
 ```bash
 # 查看服务器信息（组配置、CA 公钥指纹等）
-cert-operator info https://121.196.206.66:8443
+cert-operator info https://ca-server:8443
 
 # 健康检查
-cert-operator health https://121.196.206.66:8443
+cert-operator health https://ca-server:8443
 
 # 查询服务端版本号
-cert-operator version --server https://121.196.206.66:8443
+cert-operator version --server https://ca-server:8443
 ```

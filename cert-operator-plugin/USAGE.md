@@ -38,7 +38,7 @@
 
 | 参数 | 必填 | 类型 | 默认值 | 说明 |
 |------|------|------|--------|------|
-| `server` | ✅ | URL | — | CA 服务器地址，如 `https://121.196.206.66:8443` |
+| `server` | ✅ | URL | — | CA 服务器地址，如 `https://ca-server:8443` |
 | `totp_code` | ✅ | string(6) | — | 用户提供的 6 位 TOTP 验证码 |
 | `cert_name` | ✅ | 文件名 | — | 标识这个证书用途，如 `web-server`。只能含字母数字和 `-_.` |
 | `group_name` | | string | `default` | 组名，决定证书中写入哪些 SSH 权限 |
@@ -52,7 +52,7 @@
 ```json
 {
   "success": true,
-  "cert_path": "/home/yyx/.hermes/certs/web-server",
+  "cert_path": "~/.hermes/certs/web-server",
   "cert_name": "web-server",
   "serial": "3",
   "expires_at": "2026-06-10T02:54:56Z"
@@ -118,7 +118,7 @@ ssh -A -i ~/.hermes/certs/<cert_name> -p <port> user@host '<command>'
 ```json
 {
   "success": true,
-  "output": "ssh -A -i /home/yyx/.hermes/certs/web-server -p 22 root@121.196.206.66",
+  "output": "ssh -A -i ~/.hermes/certs/web-server -p 22 root@目标服务器",
   "exit_code": 0
 }
 ```
@@ -500,15 +500,15 @@ cert-operator version                                          # 显示版本
 
 ```bash
 # 基本用法
-cert-operator get-cert https://121.196.206.66:8443 482901 my-server
+cert-operator get-cert https://ca-server:8443 482901 my-server
 
 # 指定组和用户
-cert-operator get-cert https://121.196.206.66:8443 482901 my-server \
+cert-operator get-cert https://ca-server:8443 482901 my-server \
     --group root \
     --user root
 
 # 覆盖默认证书路径
-cert-operator get-cert https://121.196.206.66:8443 482901 my-server \
+cert-operator get-cert https://ca-server:8443 482901 my-server \
     --ca-cert /path/to/ca-https-cert.pem \
     --client-cert /path/to/client.cert \
     --client-key /path/to/client.key
@@ -520,15 +520,15 @@ cert-operator get-cert https://121.196.206.66:8443 482901 my-server \
 
 ```bash
 # 基本命令
-cert-operator ssh 121.196.206.66 root ~/.hermes/certs/my-server "df -h"
+cert-operator ssh 目标服务器 root ~/.hermes/certs/my-server "df -h"
 
 # 指定端口
-cert-operator ssh 121.196.206.66 root ~/.hermes/certs/my-server \
+cert-operator ssh 目标服务器 root ~/.hermes/certs/my-server \
     "systemctl status nginx" --port 2222
 
 # 无命令模式：生成 ssh 命令字符串
-cert-operator ssh 121.196.206.66 root ~/.hermes/certs/my-server
-# 输出: ssh -A -i ~/.hermes/certs/my-server -p 22 root@121.196.206.66
+cert-operator ssh 目标服务器 root ~/.hermes/certs/my-server
+# 输出: ssh -A -i ~/.hermes/certs/my-server -p 22 root@目标服务器
 ```
 
 **CLI ssh 行为：**
@@ -547,7 +547,7 @@ eval $(ssh-agent -s)
 ssh-add ~/.hermes/certs/my-server
 
 # 3. SSH 连接（必须加 -A）
-ssh -A -i ~/.hermes/certs/my-server -p 22 root@121.196.206.66
+ssh -A -i ~/.hermes/certs/my-server -p 22 root@目标服务器
 
 # 4. 结束后清理
 ssh-add -D
@@ -1017,7 +1017,7 @@ fi
 
 用法：
 ```bash
-bash diagnose.sh 121.196.206.66 22 root
+bash diagnose.sh ca-server 22 root
 ```
 
 ## 附录 B：版本对应关系
