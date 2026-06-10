@@ -1,21 +1,16 @@
 #!/bin/bash
 # =============================================================================
-# cert-sudo-check — 检查 SSH 证书是否包含 sudo@cert-operator 扩展
-# 通过 PAM pam_exec.so 调用
-# exit 0 = 允许 sudo，exit 1 = 拒绝
+# cert-sudo-check — 检查当前会话是否有 sudo@cert-operator 扩展的 SSH 证书
+# 通过 PAM 的 pam_exec.so 调用，exit 0 = 允许 sudo，exit 1 = 拒绝
 #
-# v3: 支持三种模式
-#   1. SSH agent socket 扫描（/tmp/ssh-*/agent.*）
-#   2. 磁盘证书文件扫描（~/.ssh/*-cert.pub, ~/.hermes/certs/*-cert.pub）
-#   3. SSH_AUTH_SOCK 环境变量
+# v4: 修复 set -e 在 agent 检查失败后被意外中断的问题
+#     check_agent_certs() 内部不再因 set -e 退出整个脚本
 # =============================================================================
-set -euo pipefail
+set -u
 
-# ---- 配置（可通过环境变量覆盖） ----
 CA_PUB_FILE="${CERT_SUDO_CA:-/opt/ca_server/data/ca_key.pub}"
 SUDO_EXT="${CERT_SUDO_EXT:-sudo@cert-operator}"
 
-# ---- 获取 CA 公钥指纹 ----
 get_ca_fp() {
     if [[ ! -f "$CA_PUB_FILE" ]]; then
         return 1
@@ -23,91 +18,67 @@ get_ca_fp() {
     ssh-keygen -lf "$CA_PUB_FILE" 2>/dev/null | awk '{print $2}'
 }
 
-# ---- 检查单个证书文件是否有 sudo 扩展 ----
 check_cert_file() {
     local cert_path="$1" ca_fp="$2"
     [[ -f "$cert_path" ]] || return 1
-
-    INFO=$(ssh-keygen -L -f "$cert_path" 2>/dev/null || true)
-    [[ -z "$INFO" ]] && return 1
-
-    # 检查 CA 签名
-    echo "$INFO" | grep -q "$ca_fp" || return 1
-    # 检查 sudo 扩展
-    echo "$INFO" | grep -q "$SUDO_EXT" || return 1
+    local info
+    info=$(ssh-keygen -L -f "$cert_path" 2>/dev/null) || return 1
+    [[ -z "$info" ]] && return 1
+    echo "$info" | grep -q "$ca_fp" || return 1
+    echo "$info" | grep -q "$SUDO_EXT" || return 1
     return 0
 }
 
-# ---- 扫描磁盘上的证书文件 ----
 scan_cert_files() {
-    local ca_fp="$1"
-
-    # 扫描 ~/.ssh/*-cert.pub
-    for f in "$HOME"/.ssh/*-cert.pub; do
+    local ca_fp="$1" f
+    for f in "$HOME"/.ssh/*-cert.pub "$HOME"/.hermes/certs/*-cert.pub; do
         [[ -f "$f" ]] || continue
-        if check_cert_file "$f" "$ca_fp"; then
-            return 0
-        fi
+        check_cert_file "$f" "$ca_fp" && return 0
     done
-
-    # 扫描 ~/.hermes/certs/*-cert.pub
-    for f in "$HOME"/.hermes/certs/*-cert.pub; do
-        [[ -f "$f" ]] || continue
-        if check_cert_file "$f" "$ca_fp"; then
-            return 0
-        fi
-    done
-
     return 1
 }
 
-# ---- 查找 SSH agent socket ----
 find_agent_sock() {
-    if [[ -n "${SSH_AUTH_SOCK:-}" ]] && [[ -S "$SSH_AUTH_SOCK" ]]; then
-        echo "$SSH_AUTH_SOCK"
-        return 0
-    fi
+    [[ -n "${SSH_AUTH_SOCK:-}" ]] && [[ -S "$SSH_AUTH_SOCK" ]] && { echo "$SSH_AUTH_SOCK"; return 0; }
+    local d
     for d in /tmp/ssh-*/agent.*; do
         [[ -S "$d" ]] || continue
-        if [[ "$(stat -c '%u' "$d" 2>/dev/null)" == "$(id -u)" ]]; then
-            echo "$d"
-            return 0
-        fi
+        [[ "$(stat -c '%u' "$d" 2>/dev/null)" == "$(id -u)" ]] || continue
+        echo "$d"
+        return 0
     done
     return 1
 }
 
-# ---- 从 agent 检查证书 ----
 check_agent_certs() {
-    local sock="$1" ca_fp="$2"
-    CERT_DATA=$(SSH_AUTH_SOCK="$sock" ssh-add -L 2>/dev/null) || return 1
-    [[ -z "$CERT_DATA" ]] && return 1
-
-    while IFS= read -r line; do
+    local sock="$1" ca_fp="$2" data line tmp info
+    set +e
+    data=$(SSH_AUTH_SOCK="$sock" ssh-add -L 2>/dev/null)
+    if [[ $? -ne 0 || -z "$data" ]]; then
+        return 1
+    fi
+    while IFS= read -r line || [[ -n "$line" ]]; do
         [[ -z "$line" ]] && continue
         echo "$line" | grep -q "cert-v01@openssh.com" || continue
-        TMP=$(mktemp)
-        echo "$line" > "$TMP"
-        INFO=$(ssh-keygen -L -f "$TMP" 2>/dev/null || true)
-        rm -f "$TMP"
-        [[ -z "$INFO" ]] && continue
-        if echo "$INFO" | grep -q "$ca_fp" && echo "$INFO" | grep -q "$SUDO_EXT"; then
+        tmp=$(mktemp) || continue
+        echo "$line" > "$tmp"
+        info=$(ssh-keygen -L -f "$tmp" 2>/dev/null)
+        rm -f "$tmp"
+        [[ -z "$info" ]] && continue
+        if echo "$info" | grep -q "$ca_fp" && echo "$info" | grep -q "$SUDO_EXT"; then
             return 0
         fi
-    done <<< "$CERT_DATA"
+    done <<< "$data"
     return 1
 }
 
 # ---- Main ----
 CA_FP=$(get_ca_fp) || exit 1
 
-# 模式 1: 先尝试 SSH agent（支持 agent forwarding）
 SOCK=$(find_agent_sock) || true
 if [[ -n "$SOCK" ]]; then
     check_agent_certs "$SOCK" "$CA_FP" && exit 0
 fi
 
-# 模式 2: 扫描磁盘上的证书文件
 scan_cert_files "$CA_FP" && exit 0
-
 exit 1
