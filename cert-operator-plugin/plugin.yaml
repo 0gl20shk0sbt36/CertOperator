@@ -2,12 +2,18 @@ name: cert-operator
 version: "3.0.0"
 description: >
   【SSH 证书管理插件】通过 TOTP + 自签证书从 CA 服务器获取 SSH 子证书。
-  提供两个按顺序执行的工作流工具：
+  提供五个工具：
     1. get_sub_cert — AI 向用户索要 TOTP 验证码 → 调用此工具 → 获取 SSH 子证书并保存到本地
     2. ssh_with_cert — 用上一步获取的证书 SSH 登录目标服务器，执行命令
+    3. get_server_info — 查询 CA 服务器信息（组配置、CA 公钥指纹等）
+    4. get_server_health — 检查 CA 服务器是否在线
+    5. get_server_version — 查询 CA 服务器版本号
   适用于零信任远程登录场景，支持 sudo 权限控制。
 author: yyx
 provides_tools:
   - get_sub_cert
   - ssh_with_cert
+  - get_server_info
+  - get_server_health
+  - get_server_version
 requires_env: []
