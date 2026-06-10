@@ -106,6 +106,7 @@ func cmdGetCert(args []string) {
 	if clientKey == "" { clientKey = defaultPath("client.key") }
 	group := flags["--group"]
 	user := flags["--user"]
+	certDir := flags["--cert-dir"]
 
 	// Validate cert_name (prevent path traversal)
 	if strings.Contains(certName, "/") || strings.Contains(certName, "\\") ||
@@ -198,7 +199,8 @@ func cmdGetCert(args []string) {
 	}
 
 	// Save key and cert
-	outDir := hermesDir()
+	outDir := certDir
+	if outDir == "" { outDir = hermesDir() }
 	os.MkdirAll(outDir, 0700)
 	keyPath := filepath.Join(outDir, certName)
 	certPath := filepath.Join(outDir, certName+"-cert.pub")

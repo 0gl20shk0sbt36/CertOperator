@@ -65,11 +65,11 @@ else:
 # ---------------------------------------------------------------------------
 
 
-def _ensure_certs_dir() -> Path:
-    path = DEFAULT_CERTS_DIR
-    path.mkdir(parents=True, exist_ok=True)
-    path.chmod(0o700)
-    return path
+def _ensure_certs_dir(path: Optional[Path] = None) -> Path:
+    p = path or DEFAULT_CERTS_DIR
+    p.mkdir(parents=True, exist_ok=True)
+    p.chmod(0o700)
+    return p
 
 
 def _validate_cert_name(name: str) -> str:
@@ -88,8 +88,9 @@ def _safe_filename(name: str) -> str:
     return "".join(c if c.isalnum() or c in "._-" else "_" for c in name)
 
 
-def _save_ssh_cert(name: str, private_key: str, cert_content: str) -> tuple[str, str]:
-    certs_dir = _ensure_certs_dir()
+def _save_ssh_cert(name: str, private_key: str, cert_content: str, cert_dir: Optional[str] = None) -> tuple[str, str]:
+    certs_dir = Path(cert_dir) if cert_dir else None
+    certs_dir = _ensure_certs_dir(certs_dir)
     safe_name = _safe_filename(name)
     key_path = certs_dir / safe_name
     key_path.write_text(private_key)
@@ -396,6 +397,10 @@ SCHEMA_GET_SUB_CERT = {
                 "type": "string",
                 "description": "【选填】要登录的目标服务器 SSH 用户名。证书会签发为该用户，SSH 时只能用这个用户名登录。如果该用户不在组的允许列表中会失败。例如 root、ubuntu、ec2-user",
             },
+            "cert_dir": {
+                "type": "string",
+                "description": "【选填】证书保存目录。默认 ~/.hermes/certs/。可用于指定自定义路径，例如 '/tmp/certs'",
+            },
         },
         "required": ["server", "totp_code", "cert_name"],
     },
@@ -468,6 +473,7 @@ def _handle_get_sub_cert(params=None, **kwargs) -> str:
         client_key = params.get("client_key") or None
         group_name = params.get("group_name") or None
         user_name = params.get("user_name") or None
+        cert_dir = params.get("cert_dir") or None
 
         data = _request_cert(server, totp_code, ca_cert_path, client_cert, client_key, group_name, user_name)
         ssh_private_key = data.get("ssh_private_key", "")
@@ -477,7 +483,7 @@ def _handle_get_sub_cert(params=None, **kwargs) -> str:
         if not ssh_cert:
             return json.dumps({"success": False, "error": "服务器响应中未包含 SSH 证书"}, ensure_ascii=False)
 
-        key_path, cert_path = _save_ssh_cert(cert_name, ssh_private_key, ssh_cert)
+        key_path, cert_path = _save_ssh_cert(cert_name, ssh_private_key, ssh_cert, cert_dir)
         result = {
             "success": True,
             "cert_path": key_path,
