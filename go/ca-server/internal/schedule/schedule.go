@@ -30,12 +30,12 @@ type Rule struct {
 	LastReset string `json:"last_reset"` // date-string "2006-01-02"
 }
 
-// Request is a client-submitted passwordless-schedule application.
+// Request is a client-submitted passwordless-schedule application (one rule).
 type Request struct {
 	ClientName string `json:"client_name"` // mTLS cert CN
 	GrantedTo  string `json:"granted_to"`  // mTLS cert OU
 	Status     string `json:"status"`      // pending | approved | rejected
-	Rules      []Rule `json:"rules"`
+	Rule       Rule   `json:"rule"`        // single rule
 	CreatedAt  string `json:"created_at"`
 	UpdatedAt  string `json:"updated_at"`
 }
@@ -113,7 +113,7 @@ func requestKey(clientName, ruleName string) string { return clientName + ":" + 
 // SubmitRequest creates a pending request.  Each client can have multiple
 // requests (different rule names).  The max number of pending rules per
 // client is capped by MaxPendingRulesPerClient.
-func SubmitRequest(dataDir string, clientName, grantedTo string, rules []Rule) error {
+func SubmitRequest(dataDir string, clientName, grantedTo string, rule Rule) error {
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -122,12 +122,10 @@ func SubmitRequest(dataDir string, clientName, grantedTo string, rules []Rule) e
 		return err
 	}
 
-	// Validate rule names are unique for this client.
-	for _, rule := range rules {
-		key := requestKey(clientName, rule.Name)
-		if existing, ok := reqs[key]; ok && existing.Status == "pending" {
-			return fmt.Errorf("已有待审批的同名规则 %q，请先等待审批或删除", rule.Name)
-		}
+	// Validate rule name is unique for this client.
+	key := requestKey(clientName, rule.Name)
+	if existing, ok := reqs[key]; ok && existing.Status == "pending" {
+		return fmt.Errorf("已有待审批的同名规则 %q，请等待审批或删除后再提交", rule.Name)
 	}
 
 	// Count pending rules for this client.
@@ -135,16 +133,11 @@ func SubmitRequest(dataDir string, clientName, grantedTo string, rules []Rule) e
 	for k, r := range reqs {
 		cn, _ := splitKey(k)
 		if cn == clientName && r.Status == "pending" {
-			for range r.Rules {
-				pendingCount++
-			}
+			pendingCount++
 		}
 	}
-	for range rules {
-		if pendingCount >= MaxPendingRulesPerClient {
-			return fmt.Errorf("待审批规则数已达上限（%d），请等待审批后再提交", MaxPendingRulesPerClient)
-		}
-		pendingCount++
+	if pendingCount >= MaxPendingRulesPerClient {
+		return fmt.Errorf("待审批规则数已达上限（%d），请等待审批后再提交", MaxPendingRulesPerClient)
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -152,13 +145,10 @@ func SubmitRequest(dataDir string, clientName, grantedTo string, rules []Rule) e
 		ClientName: clientName,
 		GrantedTo:  grantedTo,
 		Status:     "pending",
-		Rules:      rules,
+		Rule:       rule,
 		CreatedAt:  now,
 		UpdatedAt:  now,
 	}
-
-	// Key = first rule's name (assumes at least one rule, validated by caller).
-	key := requestKey(clientName, rules[0].Name)
 	reqs[key] = req
 	return saveRequests(dataDir, reqs)
 }
@@ -246,7 +236,7 @@ func ApproveRequest(dataDir, clientName, ruleName string) error {
 		return err
 	}
 
-	// Merge rules into approved-schedules.
+	// Upsert the approved rule.
 	app, err := loadApproved(dataDir)
 	if err != nil {
 		return err
@@ -256,19 +246,16 @@ func ApproveRequest(dataDir, clientName, ruleName string) error {
 		cs = &ClientSchedules{ClientName: clientName}
 		app[clientName] = cs
 	}
-	// Replace existing rules with same name, append new ones.
-	for _, newRule := range r.Rules {
-		replaced := false
-		for i, existing := range cs.Rules {
-			if existing.Name == newRule.Name {
-				cs.Rules[i] = newRule
-				replaced = true
-				break
-			}
+	replaced := false
+	for i, existing := range cs.Rules {
+		if existing.Name == r.Rule.Name {
+			cs.Rules[i] = r.Rule
+			replaced = true
+			break
 		}
-		if !replaced {
-			cs.Rules = append(cs.Rules, newRule)
-		}
+	}
+	if !replaced {
+		cs.Rules = append(cs.Rules, r.Rule)
 	}
 	return saveApproved(dataDir, app)
 }
@@ -473,32 +460,22 @@ func RevokeApproved(dataDir, clientName string) error {
 
 // ---- validation ------------------------------------------------------------
 
-// ValidateRules checks each rule for basic correctness.
-func ValidateRules(rules []Rule) error {
-	if len(rules) == 0 {
-		return fmt.Errorf("at least one rule is required")
+// ValidateRule checks a single rule for basic correctness.
+func ValidateRule(r Rule) error {
+	if strings.TrimSpace(r.Name) == "" {
+		return fmt.Errorf("name is required")
 	}
-	seen := make(map[string]bool)
-	for i, r := range rules {
-		if strings.TrimSpace(r.Name) == "" {
-			return fmt.Errorf("rule %d: name is required", i)
-		}
-		if seen[r.Name] {
-			return fmt.Errorf("duplicate rule name %q", r.Name)
-		}
-		seen[r.Name] = true
-		if r.MaxCount <= 0 {
-			return fmt.Errorf("rule %d: max_count must be > 0", i)
-		}
-		if strings.TrimSpace(r.Group) == "" {
-			return fmt.Errorf("rule %d: group is required", i)
-		}
-		if r.StartTime == "" || r.EndTime == "" {
-			return fmt.Errorf("rule %d: start_time and end_time are required", i)
-		}
-		if r.StartTime >= r.EndTime {
-			return fmt.Errorf("rule %d: start_time must be before end_time", i)
-		}
+	if r.MaxCount <= 0 {
+		return fmt.Errorf("max_count must be > 0")
+	}
+	if strings.TrimSpace(r.Group) == "" {
+		return fmt.Errorf("group is required")
+	}
+	if r.StartTime == "" || r.EndTime == "" {
+		return fmt.Errorf("start_time and end_time are required")
+	}
+	if r.StartTime >= r.EndTime {
+		return fmt.Errorf("start_time must be before end_time")
 	}
 	return nil
 }

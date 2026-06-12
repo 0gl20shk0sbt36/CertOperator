@@ -916,18 +916,16 @@ func cmdSchedule(args []string) {
 				statusIcon = "❌"
 			}
 			fmt.Printf("%s [%s] %s (授予: %s)\n", statusIcon, req.Status, req.ClientName, req.GrantedTo)
-			for _, rule := range req.Rules {
-				days := "每天"
-				if len(rule.Days) > 0 {
-					dayNames := []string{"日","一","二","三","四","五","六"}
-					var ds []string
-					for _, d := range rule.Days {
-						ds = append(ds, dayNames[d])
-					}
-					days = "周" + strings.Join(ds, ",")
+			days := "每天"
+			if len(req.Rule.Days) > 0 {
+				dayNames := []string{"日","一","二","三","四","五","六"}
+				var ds []string
+				for _, d := range req.Rule.Days {
+					ds = append(ds, dayNames[d])
 				}
-				fmt.Printf("   ├ %s: %s %s-%s ×%d 组:%s\n", rule.Name, days, rule.StartTime, rule.EndTime, rule.MaxCount, rule.Group)
+				days = "周" + strings.Join(ds, ",")
 			}
+			fmt.Printf("   ├ %s: %s %s-%s ×%d 组:%s\n", req.Rule.Name, days, req.Rule.StartTime, req.Rule.EndTime, req.Rule.MaxCount, req.Rule.Group)
 			fmt.Println()
 		}
 
@@ -972,18 +970,16 @@ func cmdSchedule(args []string) {
 			fmt.Printf("   授予者: %s\n", req.GrantedTo)
 			fmt.Printf("   状态:   %s\n", req.Status)
 			fmt.Printf("   创建:   %s\n", req.CreatedAt)
-			for _, rule := range req.Rules {
-				days := "每天"
-				if len(rule.Days) > 0 {
-					dayNames := []string{"日","一","二","三","四","五","六"}
-					var ds []string
-					for _, d := range rule.Days {
-						ds = append(ds, dayNames[d])
-					}
-					days = "周" + strings.Join(ds, ",")
+			days := "每天"
+			if len(req.Rule.Days) > 0 {
+				dayNames := []string{"日","一","二","三","四","五","六"}
+				var ds []string
+				for _, d := range req.Rule.Days {
+					ds = append(ds, dayNames[d])
 				}
-				fmt.Printf("   📎 %s: %s %s-%s ×%d 组:%s\n", rule.Name, days, rule.StartTime, rule.EndTime, rule.MaxCount, rule.Group)
+				days = "周" + strings.Join(ds, ",")
 			}
+			fmt.Printf("   📎 %s: %s %s-%s ×%d 组:%s\n", req.Rule.Name, days, req.Rule.StartTime, req.Rule.EndTime, req.Rule.MaxCount, req.Rule.Group)
 			fmt.Println()
 		}
 

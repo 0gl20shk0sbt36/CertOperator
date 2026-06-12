@@ -704,8 +704,8 @@ func (s *Server) handleScheduleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		GrantedTo string                `json:"granted_to"`
-		Rules     []schedule.Rule       `json:"rules"`
+		GrantedTo string          `json:"granted_to"`
+		Rule      schedule.Rule   `json:"rule"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "invalid JSON"})
@@ -714,7 +714,6 @@ func (s *Server) handleScheduleRequest(w http.ResponseWriter, r *http.Request) {
 
 	grantedTo := body.GrantedTo
 	if grantedTo == "" {
-		// Use cert OU if not provided
 		if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
 			ou := r.TLS.PeerCertificates[0].Subject.OrganizationalUnit
 			if len(ou) > 0 {
@@ -723,12 +722,12 @@ func (s *Server) handleScheduleRequest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := schedule.ValidateRules(body.Rules); err != nil {
+	if err := schedule.ValidateRule(body.Rule); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"error": err.Error()})
 		return
 	}
 
-	if err := schedule.SubmitRequest(s.dataDir(), clientName, grantedTo, body.Rules); err != nil {
+	if err := schedule.SubmitRequest(s.dataDir(), clientName, grantedTo, body.Rule); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{"error": err.Error()})
 		return
 	}
@@ -775,8 +774,8 @@ func (s *Server) handleScheduleReplace(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		GrantedTo string                `json:"granted_to"`
-		Rules     []schedule.Rule       `json:"rules"`
+		GrantedTo string          `json:"granted_to"`
+		Rule      schedule.Rule   `json:"rule"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "invalid JSON"})
@@ -793,20 +792,19 @@ func (s *Server) handleScheduleReplace(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := schedule.ValidateRules(body.Rules); err != nil {
+	if err := schedule.ValidateRule(body.Rule); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"error": err.Error()})
 		return
 	}
 
 	// Check if there's an existing pending request with the same rule name.
-	existing, err := schedule.GetRequestByRule(s.dataDir(), clientName, body.Rules[0].Name)
+	existing, err := schedule.GetRequestByRule(s.dataDir(), clientName, body.Rule.Name)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{"error": err.Error()})
 		return
 	}
 	if existing != nil && existing.Status == "pending" {
-		// Replace
-		if err := schedule.SubmitRequest(s.dataDir(), clientName, grantedTo, body.Rules); err != nil {
+		if err := schedule.SubmitRequest(s.dataDir(), clientName, grantedTo, body.Rule); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]interface{}{"error": err.Error()})
 			return
 		}
