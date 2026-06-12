@@ -765,6 +765,24 @@ func cmdClients(args []string) {
 			fmt.Fprintf(os.Stderr, "❌ %v\n", err)
 			os.Exit(1)
 		}
+	case "freeze":
+		if len(rest) < 1 {
+			fmt.Fprintf(os.Stderr, "❌ Usage: ca-server clients freeze <name>\n")
+			os.Exit(1)
+		}
+		if err := ca.FreezeClientCert(cfg, rest[0]); err != nil {
+			fmt.Fprintf(os.Stderr, "❌ %v\n", err)
+			os.Exit(1)
+		}
+	case "unfreeze":
+		if len(rest) < 1 {
+			fmt.Fprintf(os.Stderr, "❌ Usage: ca-server clients unfreeze <name>\n")
+			os.Exit(1)
+		}
+		if err := ca.UnfreezeClientCert(cfg, rest[0]); err != nil {
+			fmt.Fprintf(os.Stderr, "❌ %v\n", err)
+			os.Exit(1)
+		}
 	case "list":
 		records, err := ca.ListClientCerts(cfg)
 		if err != nil {
@@ -775,7 +793,11 @@ func cmdClients(args []string) {
 			fmt.Println("(no clients issued)")
 		} else {
 			for _, r := range records {
-				fmt.Printf("📋 %s\n", r.Name)
+				icon := "📋"
+				if r.Frozen {
+					icon = "🔒"
+				}
+				fmt.Printf("%s %s\n", icon, r.Name)
 				fmt.Printf("   Granted to: %s\n", r.GrantedTo)
 				fmt.Printf("   Serial:     %d\n", r.Serial)
 				fmt.Printf("   Expires:    %s\n", r.ExpiresAt)
@@ -808,6 +830,9 @@ func cmdClients(args []string) {
 		}
 		if r.User != "" {
 			fmt.Printf("   User:        %s\n", r.User)
+		}
+		if r.Frozen {
+			fmt.Printf("   🔒 Frozen at: %s\n", r.FrozenAt)
 		}
 		fmt.Printf("   Cert file:   %s\n", r.CertFile)
 	default:
@@ -847,6 +872,8 @@ Usage:
   ca-server clients list                                  List all issued clients
   ca-server clients show <name>                           Show client details
   ca-server clients revoke <name>                         Revoke (remove from roster)
+  ca-server clients freeze <name>                         Freeze (temporary disable)
+  ca-server clients unfreeze <name>                       Unfreeze (re-enable)
 
 Issue flags:
   --validity DAYS    Validity in days (default 365)

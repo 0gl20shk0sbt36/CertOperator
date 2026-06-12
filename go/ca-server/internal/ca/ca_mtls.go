@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/cert-operator/ca-server/v2/internal/config"
+	"github.com/cert-operator/ca-server/v2/internal/schedule"
 )
 
 // ---- paths -----------------------------------------------------------------
@@ -58,6 +59,8 @@ type ClientRecord struct {
 	SAN       string `json:"san,omitempty"` // DNS:x,IP:y 格式，空表示无 SAN
 	User      string `json:"user,omitempty"` // 关联的 SSH 用户名
 	CertFile  string `json:"cert_file"`      // 证书 PEM 文件路径（相对 dataDir）
+	Frozen    bool   `json:"frozen"`         // 冻结（临时禁用）
+	FrozenAt  string `json:"frozen_at,omitempty"` // 冻结时间
 }
 
 // ClientsDB is the on-disk roster of issued mTLS certificates.
@@ -111,8 +114,8 @@ func nextMTLSSerial(cfg *config.Config) (int64, error) {
 	return maxSerial + 1, nil
 }
 
-// IsClientAuthorized checks whether a client certificate serial is present and
-// unexpired in the roster.  Called from the TLS VerifyPeerCertificate callback.
+// IsClientAuthorized checks whether a client certificate serial is present,
+// not frozen, and unexpired.  Called from the TLS VerifyPeerCertificate callback.
 func IsClientAuthorized(cfg *config.Config, serial *big.Int) (bool, error) {
 	db, err := loadClientsDB(cfg)
 	if err != nil {
@@ -120,6 +123,9 @@ func IsClientAuthorized(cfg *config.Config, serial *big.Int) (bool, error) {
 	}
 	for _, r := range db.Clients {
 		if r.Serial == serial.Int64() {
+			if r.Frozen {
+				return false, nil
+			}
 			expires, eErr := time.Parse(time.RFC3339, r.ExpiresAt)
 			if eErr != nil {
 				return false, nil // malformed expiry → deny
@@ -428,11 +434,10 @@ func buildClientPack(cfg *config.Config, tarPath, name string, keyPEM, certPEM [
 	return os.WriteFile(tarPath, buf.Bytes(), 0644)
 }
 
-// ---- revoke -----------------------------------------------------------------
+// ---- revoke / freeze / unfreeze --------------------------------------------
 
-// RevokeClientCert removes a client certificate from the roster.  The
-// certificate itself is kept on disk (can be re-issued later), but the server
-// will reject it at TLS handshake time.
+// RevokeClientCert removes a client certificate from the roster, including its
+// schedule rules.
 func RevokeClientCert(cfg *config.Config, name string) error {
 	db, err := loadClientsDB(cfg)
 	if err != nil {
@@ -445,7 +450,54 @@ func RevokeClientCert(cfg *config.Config, name string) error {
 	if err := saveClientsDB(cfg, db); err != nil {
 		return err
 	}
+	// Clean up associated schedule rules (quiet if none exist).
+	dataDir := DataDir(cfg)
+	if rErr := schedule.RevokeApproved(dataDir, name); rErr != nil {
+		// No-op: client simply had no schedule rules.
+		_ = rErr
+	}
 	fmt.Printf("   ❌ Revoked: %s\n", name)
+	return nil
+}
+
+// FreezeClientCert temporarily disables a client certificate without removing
+// it from the roster.
+func FreezeClientCert(cfg *config.Config, name string) error {
+	db, err := loadClientsDB(cfg)
+	if err != nil {
+		return err
+	}
+	r, ok := db.Clients[name]
+	if !ok {
+		return fmt.Errorf("client %q not found", name)
+	}
+	r.Frozen = true
+	r.FrozenAt = time.Now().UTC().Format(time.RFC3339)
+	db.Clients[name] = r
+	if err := saveClientsDB(cfg, db); err != nil {
+		return err
+	}
+	fmt.Printf("   ❄️ Frozen: %s\n", name)
+	return nil
+}
+
+// UnfreezeClientCert re-enables a frozen client certificate.
+func UnfreezeClientCert(cfg *config.Config, name string) error {
+	db, err := loadClientsDB(cfg)
+	if err != nil {
+		return err
+	}
+	r, ok := db.Clients[name]
+	if !ok {
+		return fmt.Errorf("client %q not found", name)
+	}
+	r.Frozen = false
+	r.FrozenAt = ""
+	db.Clients[name] = r
+	if err := saveClientsDB(cfg, db); err != nil {
+		return err
+	}
+	fmt.Printf("   ✅ Unfrozen: %s\n", name)
 	return nil
 }
 
