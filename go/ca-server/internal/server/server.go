@@ -95,7 +95,9 @@ func (s *Server) Serve() error {
 	mux.HandleFunc("/api/v1/health", s.handleHealth)
 	mux.HandleFunc("/api/v1/version", s.handleVersion)
 	mux.HandleFunc("/api/v1/targets", s.handleTargets)
+	mux.HandleFunc("/api/v1/get-scheduled-cert", s.handleGetScheduledCert)
 	mux.HandleFunc("/api/v1/schedule/", s.handleSchedule)
+	mux.HandleFunc("/api/v1/info", s.handleInfo)
 	mux.HandleFunc("/api/v1/", s.handleNotFound)
 
 	srv := &http.Server{
@@ -275,6 +277,23 @@ func (s *Server) handleGetCert(w http.ResponseWriter, r *http.Request) {
 	if sudoAllowed {
 		extensions["sudo"] = "true"
 	}
+	// Add target + group + version extensions
+	extensions["target"] = body.Target
+	extensions["group"] = body.Group
+	if cfg.Clients.CAIssuerID != "" {
+		extensions["issuer"] = cfg.Clients.CAIssuerID
+	}
+	// Read group version and add to extensions
+	gv, gvErr := rules.LoadGroupVersions(cfg.DataDir(), body.Target)
+	if gvErr == nil && gv != nil {
+		for issuer, groups := range gv.Issuers {
+			for grp, ver := range groups {
+				if grp == body.Group {
+					extensions["group-version"] = fmt.Sprintf("%s-v%d", issuer, ver)
+				}
+			}
+		}
+	}
 
 	validity := fmt.Sprintf("+%dm", cfg.Defaults.ValidityMinutes)
 	signer := cert.NewSigner(caKey, "ed25519", serialFile)
@@ -364,6 +383,130 @@ func checkClientRevocation(configPath string, serial *big.Int) (bool, error) {
 }
 
 // ---- TargetWatcher (long-polling) ----------------------------------------
+
+// ---- info handler ---------------------------------------------------------
+
+func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]interface{}{"error":"method not allowed"})
+		return
+	}
+	target := r.URL.Query().Get("target")
+	if target == "" { target = "default" }
+	group := r.URL.Query().Get("group")
+	if group == "" { group = "default" }
+
+	_, _ = config.LoadRoot(s.ConfigPath)
+	segments := rules.Compile(nil) // placeholder
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"target":   target,
+		"group":    group,
+		"segments": segments,
+	})
+}
+
+// ---- get-scheduled-cert handler -------------------------------------------
+
+func (s *Server) handleGetScheduledCert(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]interface{}{"error":"method not allowed"})
+		return
+	}
+	clientCN := clientCertCN(r)
+	if clientCN == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]interface{}{"error":"mTLS required"})
+		return
+	}
+
+	cfg, _ := config.LoadRoot(s.ConfigPath)
+	var body struct {
+		Target     string `json:"target"`
+		Group      string `json:"group"`
+		ScheduleID string `json:"schedule_id"`
+		User       string `json:"user"`
+	}
+	json.NewDecoder(r.Body).Decode(&body)
+	if body.Target == "" { body.Target = "default" }
+	if body.Group == ""  { body.Group = "default" }
+
+	// Verify approved schedule
+	rulesList, _ := rules.GetApprovedRules(cfg.DataDir(), body.Target, body.Group, clientCN)
+	if len(rulesList) == 0 {
+		writeJSON(w, http.StatusForbidden, map[string]interface{}{"error":"无已审批的免密规则"})
+		return
+	}
+
+	// Find matching rule
+	var matched *rules.Rule
+	for _, rl := range rulesList {
+		if body.ScheduleID != "" && rl.ID != body.ScheduleID { continue }
+		if rl.Issue == nil || rl.Issue.Mode != rules.ModePasswordless { continue }
+		matched = &rl
+		break
+	}
+	if matched == nil {
+		writeJSON(w, http.StatusForbidden, map[string]interface{}{"error":"无匹配的免密规则"})
+		return
+	}
+
+	allowedUsers := body.User
+	if allowedUsers == "" { allowedUsers = os.Getenv("USER"); if allowedUsers == "" { allowedUsers = "root" } }
+
+	groupDir := filepath.Join(cfg.DataDir(), "targets", body.Target, "groups", body.Group)
+	signer := cert.NewSigner(filepath.Join(groupDir, "ca_key"), "ed25519", filepath.Join(groupDir, "serial.txt"))
+
+	nextStart, nextEnd := nextOccurrence(matched.Windows[0].Weekdays, matched.Windows[0].Start, matched.Windows[0].End)
+	validityStr := fmt.Sprintf("%s:%s", nextStart.Format("20060102150405"), nextEnd.Format("20060102150405"))
+
+	privKey, certPEM, serial, err := signer.SignWithValidity(allowedUsers, validityStr, map[string]string{
+		"target": body.Target, "group": body.Group, "sudo": "true",
+	})
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{"error":fmt.Sprintf("签发失败: %v", err)})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success":         true,
+		"ssh_private_key": privKey,
+		"ssh_cert":        certPEM,
+		"serial":          serial,
+		"expires_at":      nextEnd.Format(time.RFC3339),
+		"valid_from":      nextStart.Format(time.RFC3339),
+		"valid_until":     nextEnd.Format(time.RFC3339),
+	})
+}
+
+func nextOccurrence(days []int, startTime, endTime string) (time.Time, time.Time) {
+	now := time.Now().UTC()
+	today := now.Truncate(24 * time.Hour)
+	for offset := 0; offset <= 7; offset++ {
+		candidate := today.AddDate(0, 0, offset)
+		wd := int(candidate.Weekday())
+		if len(days) > 0 {
+			found := false
+			for _, d := range days { if wd == d { found = true; break } }
+			if !found { continue }
+		}
+		sH, sM := parseHHMM(startTime)
+		eH, eM := parseHHMM(endTime)
+		start := candidate.Add(time.Duration(sH)*time.Hour + time.Duration(sM)*time.Minute)
+		end := candidate.Add(time.Duration(eH)*time.Hour + time.Duration(eM)*time.Minute)
+		if offset == 0 && now.After(end) { continue }
+		return start, end
+	}
+	sH, sM := parseHHMM(startTime)
+	eH, eM := parseHHMM(endTime)
+	tomorrow := today.AddDate(0, 0, 1)
+	return tomorrow.Add(time.Duration(sH)*time.Hour + time.Duration(sM)*time.Minute),
+		tomorrow.Add(time.Duration(eH)*time.Hour + time.Duration(eM)*time.Minute)
+}
+
+func parseHHMM(s string) (int, int) {
+	h, m := 0, 0
+	fmt.Sscanf(s, "%d:%d", &h, &m)
+	return h, m
+}
 
 func sha256hex(s string) string {
 	h := sha256.Sum256([]byte(s))
