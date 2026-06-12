@@ -1,5 +1,5 @@
 name: cert-operator
-version: "3.1.1"
+version: "3.2.0"
 description: >
   【SSH 证书管理插件】通过 TOTP + 自签证书从 CA 服务器获取 SSH 子证书。
   提供五个工具：

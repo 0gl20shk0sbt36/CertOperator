@@ -20,6 +20,7 @@ import (
 
 	"github.com/cert-operator/ca-server/v2/internal/ca"
 	"github.com/cert-operator/ca-server/v2/internal/config"
+	"github.com/cert-operator/ca-server/v2/internal/schedule"
 	"github.com/cert-operator/ca-server/v2/internal/server"
 	"github.com/cert-operator/ca-server/v2/internal/totp"
 )
@@ -64,6 +65,8 @@ func main() {
 		cmdGroups(args)
 	case "clients":
 		cmdClients(args)
+	case "schedule":
+		cmdSchedule(args)
 	case "renew-cert":
 		cmdRenewCert(args)
 	case "reset":
@@ -92,6 +95,7 @@ Commands:
   totp [--verify|--regenerate]  TOTP management (default group)
   groups [action] [args]   Group management (see "groups --help")
   clients [action] [args]  mTLS client cert management (issue/list/revoke/show)
+  schedule [action] [args]  Schedule management (list/approve/reject/show)
   renew-cert               Regenerate HTTPS certificate
   reset <mode>             Reset components (ca|https|client|totp <grp>|group <grp>|all)
   version                  Show version
@@ -847,6 +851,125 @@ Issue flags:
   --validity DAYS    Validity in days (default 365)
   --san DNS:x,IP:y   Optional Subject Alternative Names
   --user NAME        Associated SSH user name
+`)
+}
+
+// ---------------------------------------------------------------------------
+// schedule — passwordless-certificate schedule management
+// ---------------------------------------------------------------------------
+
+func cmdSchedule(args []string) {
+	if len(args) == 0 {
+		printScheduleHelp()
+		os.Exit(1)
+	}
+
+	action := args[0]
+	rest := args[1:]
+	cfg := mustLoadConfig()
+	dataDir := filepath.Join(filepath.Dir(cfg.Path()), "data")
+
+	switch action {
+	case "list":
+		reqs, err := schedule.ListRequests(dataDir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "❌ %v\n", err)
+			os.Exit(1)
+		}
+		if len(reqs) == 0 {
+			fmt.Println("(无申请记录)")
+		}
+		for _, req := range reqs {
+			statusIcon := "⏳"
+			switch req.Status {
+			case "approved":
+				statusIcon = "✅"
+			case "rejected":
+				statusIcon = "❌"
+			}
+			fmt.Printf("%s [%s] %s (授予: %s)\n", statusIcon, req.Status, req.ClientName, req.GrantedTo)
+			for _, rule := range req.Rules {
+				days := "每天"
+				if len(rule.Days) > 0 {
+					dayNames := []string{"日","一","二","三","四","五","六"}
+					var ds []string
+					for _, d := range rule.Days {
+						ds = append(ds, dayNames[d])
+					}
+					days = "周" + strings.Join(ds, ",")
+				}
+				fmt.Printf("   ├ %s %s-%s ×%d 组:%s\n", days, rule.StartTime, rule.EndTime, rule.MaxCount, rule.Group)
+			}
+			fmt.Println()
+		}
+
+	case "approve":
+		if len(rest) < 1 {
+			fmt.Fprintf(os.Stderr, "❌ Usage: ca-server schedule approve <client-name>\n")
+			os.Exit(1)
+		}
+		if err := schedule.ApproveRequest(dataDir, rest[0]); err != nil {
+			fmt.Fprintf(os.Stderr, "❌ %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("✅ 已批准 %s 的定期免密申请\n", rest[0])
+
+	case "reject":
+		if len(rest) < 1 {
+			fmt.Fprintf(os.Stderr, "❌ Usage: ca-server schedule reject <client-name>\n")
+			os.Exit(1)
+		}
+		if err := schedule.RejectRequest(dataDir, rest[0]); err != nil {
+			fmt.Fprintf(os.Stderr, "❌ %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("❌ 已拒绝 %s 的申请\n", rest[0])
+
+	case "show":
+		if len(rest) < 1 {
+			fmt.Fprintf(os.Stderr, "❌ Usage: ca-server schedule show <client-name>\n")
+			os.Exit(1)
+		}
+		req, err := schedule.GetRequest(dataDir, rest[0])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "❌ %v\n", err)
+			os.Exit(1)
+		}
+		if req == nil {
+			fmt.Println("(无申请记录)")
+			return
+		}
+		fmt.Printf("📋 客户端: %s\n", req.ClientName)
+		fmt.Printf("   授予者: %s\n", req.GrantedTo)
+		fmt.Printf("   状态:   %s\n", req.Status)
+		fmt.Printf("   创建:   %s\n", req.CreatedAt)
+		for i, rule := range req.Rules {
+			days := "每天"
+			if len(rule.Days) > 0 {
+				dayNames := []string{"日","一","二","三","四","五","六"}
+				var ds []string
+				for _, d := range rule.Days {
+					ds = append(ds, dayNames[d])
+				}
+				days = "周" + strings.Join(ds, ",")
+			}
+			fmt.Printf("   规则%d: %s %s-%s ×%d 组:%s\n", i+1, days, rule.StartTime, rule.EndTime, rule.MaxCount, rule.Group)
+		}
+
+	default:
+		printScheduleHelp()
+		os.Exit(1)
+	}
+}
+
+func printScheduleHelp() {
+	fmt.Fprintf(os.Stderr, `Schedule management:
+
+Usage:
+  ca-server schedule list                     List all requests
+  ca-server schedule approve <client-name>    Approve a pending request
+  ca-server schedule reject <client-name>     Reject a request
+  ca-server schedule show <client-name>       Show request details
 `)
 }
 

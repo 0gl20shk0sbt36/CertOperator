@@ -32,12 +32,13 @@ import (
 	"github.com/cert-operator/ca-server/v2/internal/cert"
 	"github.com/cert-operator/ca-server/v2/internal/config"
 	"github.com/cert-operator/ca-server/v2/internal/ratelimit"
+	"github.com/cert-operator/ca-server/v2/internal/schedule"
 	"github.com/cert-operator/ca-server/v2/internal/totp"
 )
 
 const (
 	// Version embedded at build time; overridden by ldflags or main.go's VERSION.
-	BuiltVersion = "3.1.1"
+	BuiltVersion = "3.2.0"
 	name         = "cert-operator"
 )
 
@@ -100,6 +101,9 @@ func (s *Server) Serve() error {
 	mux.HandleFunc("/api/health", s.handleHealth)
 	mux.HandleFunc("/api/info", s.handleInfo)
 	mux.HandleFunc("/api/version", s.handleVersion)
+	mux.HandleFunc("/api/schedule/request", s.handleScheduleRequest)
+	mux.HandleFunc("/api/schedule/requests", s.handleScheduleRequests)
+	mux.HandleFunc("/api/schedule/replace", s.handleScheduleReplace)
 
 	host := cfg.Server.Host
 	if host == "" {
@@ -209,15 +213,45 @@ func (s *Server) handleGetCert(w http.ResponseWriter, r *http.Request) {
 	}
 
 	totpCode := strings.TrimSpace(body.TOTP)
+	passwordlessMode := false
+	var scheduleGroup string
+	var scheduleCS *schedule.ClientSchedules
+	var scheduleIdx int
+
+	// When TOTP is empty, try passwordless-schedule mode.
 	if totpCode == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]interface{}{
-			"success": false,
-			"error":   "缺少 totp 字段",
-		})
-		return
+		clientName := clientCertCN(r)
+		if clientName == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]interface{}{
+				"success": false,
+				"error":   "passwordless requires mTLS client certificate",
+			})
+			return
+		}
+		rule, cs, idx, matchErr := schedule.MatchClient(s.dataDir(), clientName, time.Now().UTC())
+		if matchErr != nil || rule == nil {
+			writeJSON(w, http.StatusBadRequest, map[string]interface{}{
+				"success": false,
+				"error":   "无免密规则匹配当前时段，或次数已用尽",
+			})
+			return
+		}
+		passwordlessMode = true
+		scheduleGroup = rule.Group
+		scheduleCS = cs
+		scheduleIdx = idx
+		// Set totpCode to a dummy value to pass format validation
+		totpCode = "000000"
 	}
 	groupName := strings.TrimSpace(body.Group)
 	reqUser := strings.TrimSpace(body.User)
+
+	// In passwordless mode, the group comes from the schedule rule.
+	if passwordlessMode {
+		if groupName == "" {
+			groupName = scheduleGroup
+		}
+	}
 
 	// Resolve group config
 	gcfg := cfg.ResolveGroup(groupName)
@@ -316,47 +350,48 @@ func (s *Server) handleGetCert(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// TOTP format check
-	if !isDigits(totpCode) || len(totpCode) != 6 {
-		writeJSON(w, http.StatusBadRequest, map[string]interface{}{
-			"success": false,
-			"error":   "TOTP 码格式错误",
-		})
-		return
-	}
-
-	// Verify TOTP
-	if !totp.Verify(gcfg.TOTPSecret, totpCode, 1) {
-		writeJSON(w, http.StatusUnauthorized, map[string]interface{}{
-			"success": false,
-			"error":   "TOTP 验证失败",
-		})
-		return
-	}
-
-	// TOTP replay protection: key = hash(secret|code) + 30s step.
-	// Covers steps N-1, N, N+1 (matches the ±1 verify window).
-	// Same code at a different step (≥1 step later) is allowed — so a
-	// save-failure user only waits for the TOTP app to tick over (~30s).
-	h := sha256.Sum256([]byte(gcfg.TOTPSecret + "|" + totpCode))
-	hash := hex.EncodeToString(h[:])
-	step := time.Now().Unix() / 30
-	s.totpMu.Lock()
-	for i := int64(-1); i <= 1; i++ {
-		stepKey := hash + ":" + strconv.FormatInt(step+i, 10)
-		if _, exists := s.usedTOTPs[stepKey]; exists {
-			s.totpMu.Unlock()
-			writeJSON(w, http.StatusUnauthorized, map[string]interface{}{
+	if !passwordlessMode {
+		if !isDigits(totpCode) || len(totpCode) != 6 {
+			writeJSON(w, http.StatusBadRequest, map[string]interface{}{
 				"success": false,
-				"error":   "TOTP 码已被使用，请等待新码",
+				"error":   "TOTP 码格式错误",
 			})
 			return
 		}
 	}
-	for i := int64(-1); i <= 1; i++ {
-		stepKey := hash + ":" + strconv.FormatInt(step+i, 10)
-		s.usedTOTPs[stepKey] = time.Now().Add(90 * time.Second)
+
+	// Verify TOTP (skipped in passwordless mode)
+	if !passwordlessMode {
+		if !totp.Verify(gcfg.TOTPSecret, totpCode, 1) {
+			writeJSON(w, http.StatusUnauthorized, map[string]interface{}{
+				"success": false,
+				"error":   "TOTP 验证失败",
+			})
+			return
+		}
+
+		// TOTP replay protection: key = hash(secret|code) + 30s step.
+		h := sha256.Sum256([]byte(gcfg.TOTPSecret + "|" + totpCode))
+		hash := hex.EncodeToString(h[:])
+		step := time.Now().Unix() / 30
+		s.totpMu.Lock()
+		for i := int64(-1); i <= 1; i++ {
+			stepKey := hash + ":" + strconv.FormatInt(step+i, 10)
+			if _, exists := s.usedTOTPs[stepKey]; exists {
+				s.totpMu.Unlock()
+				writeJSON(w, http.StatusUnauthorized, map[string]interface{}{
+					"success": false,
+					"error":   "TOTP 码已被使用，请等待新码",
+				})
+				return
+			}
+		}
+		for i := int64(-1); i <= 1; i++ {
+			stepKey := hash + ":" + strconv.FormatInt(step+i, 10)
+			s.usedTOTPs[stepKey] = time.Now().Add(90 * time.Second)
+		}
+		s.totpMu.Unlock()
 	}
-	s.totpMu.Unlock()
 
 	// Issue cert
 	validityMinutes := gcfg.ValidityMinutes
@@ -383,6 +418,13 @@ func (s *Server) handleGetCert(w http.ResponseWriter, r *http.Request) {
 			"error":   fmt.Sprintf("签发失败：%v", err),
 		})
 		return
+	}
+
+	// Bump schedule counter in passwordless mode.
+	if passwordlessMode && scheduleCS != nil {
+		if incErr := schedule.IncrementUsed(s.dataDir(), scheduleCS, scheduleIdx); incErr != nil {
+			log.Printf("schedule increment error: %v", incErr)
+		}
 	}
 
 	// Audit log: who requested what and when
@@ -628,4 +670,147 @@ func splitUsers(s string) []string {
 		return nil
 	}
 	return strings.FieldsFunc(s, func(r rune) bool { return r == ',' || r == ' ' })
+}
+
+// dataDir returns the data directory relative to the config file.
+func (s *Server) dataDir() string {
+	return filepath.Join(filepath.Dir(s.ConfigPath), "data")
+}
+
+// clientCertCN extracts the Common Name from the mTLS client certificate.
+func clientCertCN(r *http.Request) string {
+	if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
+		return r.TLS.PeerCertificates[0].Subject.CommonName
+	}
+	return ""
+}
+
+// ---------------------------------------------------------------------------
+// Schedule API handlers
+// ---------------------------------------------------------------------------
+
+func (s *Server) handleScheduleRequest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]interface{}{"error": "method not allowed"})
+		return
+	}
+
+	clientName := clientCertCN(r)
+	if clientName == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]interface{}{"error": "mTLS client certificate required"})
+		return
+	}
+
+	var body struct {
+		GrantedTo string                `json:"granted_to"`
+		Rules     []schedule.Rule       `json:"rules"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "invalid JSON"})
+		return
+	}
+
+	grantedTo := body.GrantedTo
+	if grantedTo == "" {
+		// Use cert OU if not provided
+		if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
+			ou := r.TLS.PeerCertificates[0].Subject.OrganizationalUnit
+			if len(ou) > 0 {
+				grantedTo = ou[0]
+			}
+		}
+	}
+
+	if err := schedule.ValidateRules(body.Rules); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"error": err.Error()})
+		return
+	}
+
+	if err := schedule.SubmitRequest(s.dataDir(), clientName, grantedTo, body.Rules); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "message": "申请已提交，等待审批"})
+}
+
+func (s *Server) handleScheduleRequests(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]interface{}{"error": "method not allowed"})
+		return
+	}
+
+	clientName := clientCertCN(r)
+	if clientName == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]interface{}{"error": "mTLS client certificate required"})
+		return
+	}
+
+	// Clients can only see their own request.
+	req, err := schedule.GetRequest(s.dataDir(), clientName)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{"error": err.Error()})
+		return
+	}
+	if req == nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"request": nil, "message": "无申请记录"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"request": req})
+}
+
+// handleScheduleReplace - PUT replaces the client's existing request.
+func (s *Server) handleScheduleReplace(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]interface{}{"error": "method not allowed"})
+		return
+	}
+
+	clientName := clientCertCN(r)
+	if clientName == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]interface{}{"error": "mTLS client certificate required"})
+		return
+	}
+
+	var body struct {
+		GrantedTo string                `json:"granted_to"`
+		Rules     []schedule.Rule       `json:"rules"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "invalid JSON"})
+		return
+	}
+
+	grantedTo := body.GrantedTo
+	if grantedTo == "" {
+		if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
+			ou := r.TLS.PeerCertificates[0].Subject.OrganizationalUnit
+			if len(ou) > 0 {
+				grantedTo = ou[0]
+			}
+		}
+	}
+
+	if err := schedule.ValidateRules(body.Rules); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"error": err.Error()})
+		return
+	}
+
+	// Check if there's an existing request that is not approved yet
+	existing, err := schedule.GetRequest(s.dataDir(), clientName)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{"error": err.Error()})
+		return
+	}
+	if existing != nil && existing.Status == "pending" {
+		// Replace
+		if err := schedule.SubmitRequest(s.dataDir(), clientName, grantedTo, body.Rules); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]interface{}{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "message": "申请已覆盖，等待审批"})
+		return
+	}
+
+	writeJSON(w, http.StatusConflict, map[string]interface{}{"error": "无待审批的申请可覆盖。（审批通过后可直接提交新申请）"})
 }

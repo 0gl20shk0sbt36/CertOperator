@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const VERSION = "3.1.1"
+const VERSION = "3.2.0"
 
 func main() {
 	if len(os.Args) < 2 || os.Args[1] == "--help" || os.Args[1] == "-h" {
@@ -39,6 +39,8 @@ func main() {
 		cmdDeploy(args)
 	case "deploy-client":
 		cmdDeployClient(args)
+	case "schedule":
+		cmdScheduleClient(args)
 	case "health":
 		cmdHealth(args)
 	case "version":
@@ -67,6 +69,7 @@ Usage:
   cert-operator ssh <host> <user> <key> [command]          SSH with certificate
   cert-operator deploy [script]                            Deploy client certs (legacy)
   cert-operator deploy-client <package.tar.gz>             Deploy mTLS client cert package
+  cert-operator schedule <action> [flags]                  Schedule mgmt (submit/show/replace)
   cert-operator version                                    Show version
 
 Get-cert flags:
@@ -545,5 +548,80 @@ func isTrue(v interface{}) bool {
 	case bool: return v
 	case string: return v == "true" || v == "yes"
 	default: return false
+	}
+}
+
+// ---- schedule client ------------------------------------------------------
+
+func cmdScheduleClient(args []string) {
+	if len(args) == 0 {
+		fmt.Fprintf(os.Stderr, `Schedule commands:
+  schedule submit             Submit a passwordless schedule request
+     --server URL             CA server URL
+     --rules JSON             Rules JSON: [{"days":[1,3,5],"start_time":"07:00","end_time":"08:00","max_count":10,"group":"admin"}]
+  schedule show               Show current request status
+     --server URL
+  schedule replace            Replace existing pending request
+     --server URL
+     --rules JSON
+`)
+		os.Exit(1)
+	}
+
+	action := args[0]
+	flags := parseFlags(args[1:])
+
+	server := flags["--server"]
+	if server == "" {
+		fmt.Fprintf(os.Stderr, "❌ --server is required\n")
+		os.Exit(1)
+	}
+	rulesJSON := flags["--rules"]
+
+	switch action {
+	case "submit":
+		client := makeClient(server, flags)
+		body := fmt.Sprintf(`{"rules":%s}`, rulesJSON)
+		resp, err := client.Post(strings.TrimRight(server, "/")+"/api/schedule/request", "application/json", strings.NewReader(body))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "❌ %v\n", err)
+			os.Exit(1)
+		}
+		defer resp.Body.Close()
+		data, _ := io.ReadAll(resp.Body)
+		fmt.Println(string(data))
+
+	case "show":
+		client := makeClient(server, flags)
+		resp, err := client.Get(strings.TrimRight(server, "/") + "/api/schedule/requests")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "❌ %v\n", err)
+			os.Exit(1)
+		}
+		defer resp.Body.Close()
+		data, _ := io.ReadAll(resp.Body)
+		fmt.Println(string(data))
+
+	case "replace":
+		client := makeClient(server, flags)
+		body := fmt.Sprintf(`{"rules":%s}`, rulesJSON)
+		req, err := http.NewRequest(http.MethodPut, strings.TrimRight(server, "/")+"/api/schedule/replace", strings.NewReader(body))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "❌ %v\n", err)
+			os.Exit(1)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := client.Do(req)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "❌ %v\n", err)
+			os.Exit(1)
+		}
+		defer resp.Body.Close()
+		data, _ := io.ReadAll(resp.Body)
+		fmt.Println(string(data))
+
+	default:
+		fmt.Fprintf(os.Stderr, "❌ Unknown action: %s\n", action)
+		os.Exit(1)
 	}
 }

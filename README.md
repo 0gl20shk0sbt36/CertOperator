@@ -98,10 +98,11 @@ cert-operator ssh 192.168.1.100 root ~/.hermes/certs/my-key "sudo systemctl stat
 
 ## 版本
 
-当前版本：**v3.1.1**
+当前版本：**v3.2.0**
 
 | 版本 | 变更 |
 |------|------|
+| v3.2.0 | 定期免密功能（schedule 申请 + 审批 + 时段免密） |
 | v3.1.1 | TOTP 防重放漏洞修复 + 审计日志 |
 | v3.1.0 | 独立 mTLS 客户端证书（mTLS CA + clients.json 管理）|
 | v3.0.0 | dpkg-divert sudo wrapper、cert-sudo-check v9、agent 自动清理 |

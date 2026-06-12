@@ -55,7 +55,8 @@ workspace/
 - v2.2.0 — reset 命令 + mount namespace sudo 包装
 - v3.0.0 — dpkg-divert sudo wrapper、cert-sudo-check v9、agent 自动清理
 - v3.1.0 — 独立 mTLS 客户端证书（mTLS CA + 按客户端签发 + clients.json 管理）
-- v3.1.1 — TOTP 防重放漏洞修复（当前版本）
+- v3.1.1 — TOTP 防重放漏洞修复
+- v3.2.0 — 定期免密功能（schedule 管理）（当前版本）
 
 ## 架构
 
