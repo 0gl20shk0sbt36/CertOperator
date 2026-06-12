@@ -919,6 +919,51 @@ func (s *Server) handleGetScheduledCert(w http.ResponseWriter, r *http.Request) 
 		allowedUsers = body.User
 	}
 
+	// Check that the client has an approved schedule rule matching this request.
+	approved, aErr := schedule.GetApprovedRules(s.dataDir(), clientName)
+	if aErr != nil || approved == nil {
+		writeJSON(w, http.StatusForbidden, map[string]interface{}{"error": "无已审批的定期免密规则，无法获取时段证书。请先通过 schedule 申请并等待审批。"})
+		return
+	}
+	rulesMatch := false
+	for _, r := range approved.Rules {
+		if r.Group != groupName {
+			continue
+		}
+		// The request's time window must be within (or equal to) an approved rule's window.
+		if r.StartTime <= body.StartTime && r.EndTime >= body.EndTime {
+			// Check days: if approved rule has days, request days must be a subset.
+			if len(r.Days) > 0 {
+				if len(body.Days) == 0 {
+					continue
+				}
+				dayOk := true
+				for _, rd := range body.Days {
+					found := false
+					for _, ad := range r.Days {
+						if rd == ad {
+							found = true
+							break
+						}
+					}
+					if !found {
+						dayOk = false
+						break
+					}
+				}
+				if !dayOk {
+					continue
+				}
+			}
+			rulesMatch = true
+			break
+		}
+	}
+	if !rulesMatch {
+		writeJSON(w, http.StatusForbidden, map[string]interface{}{"error": "无匹配的已审批规则：请求的时段/组/天不在已审批规则覆盖范围内"})
+		return
+	}
+
 	// Compute next occurrence absolute time window.
 	nextStart, nextEnd := nextOccurrence(body.Days, body.StartTime, body.EndTime)
 	validityStr := fmt.Sprintf("%s:%s", nextStart.Format("20060102150405"), nextEnd.Format("20060102150405"))
