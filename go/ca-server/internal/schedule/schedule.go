@@ -312,6 +312,65 @@ func IncrementUsed(dataDir string, cs *ClientSchedules, ruleIdx int) error {
 	return saveApproved(dataDir, app)
 }
 
+// ---- approved rules query & revoke ---------------------------------------
+
+// GetApprovedRules returns the currently active rules for a client.
+func GetApprovedRules(dataDir, clientName string) (*ClientSchedules, error) {
+	mu.Lock()
+	defer mu.Unlock()
+
+	app, err := loadApproved(dataDir)
+	if err != nil {
+		return nil, err
+	}
+	cs, ok := app[clientName]
+	if !ok {
+		return nil, nil
+	}
+	return cs, nil
+}
+
+// ListApproved returns all clients' active approved schedules.
+func ListApproved(dataDir string) (map[string]*ClientSchedules, error) {
+	mu.Lock()
+	defer mu.Unlock()
+
+	return loadApproved(dataDir)
+}
+
+// RevokeApproved removes a client's approved rules and marks the request as revoked.
+func RevokeApproved(dataDir, clientName string) error {
+	mu.Lock()
+	defer mu.Unlock()
+
+	app, err := loadApproved(dataDir)
+	if err != nil {
+		return err
+	}
+	if _, ok := app[clientName]; !ok {
+		return fmt.Errorf("no approved rules for client %q", clientName)
+	}
+	delete(app, clientName)
+	if err := saveApproved(dataDir, app); err != nil {
+		return err
+	}
+
+	// Also mark request as revoked
+	reqs, err := loadRequests(dataDir)
+	if err != nil {
+		return err
+	}
+	if r, ok := reqs[clientName]; ok && r.Status == "approved" {
+		r.Status = "revoked"
+		r.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+		reqs[clientName] = r
+		if err := saveRequests(dataDir, reqs); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // ---- validation ------------------------------------------------------------
 
 // ValidateRules checks each rule for basic correctness.

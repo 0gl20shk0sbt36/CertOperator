@@ -104,6 +104,7 @@ func (s *Server) Serve() error {
 	mux.HandleFunc("/api/schedule/request", s.handleScheduleRequest)
 	mux.HandleFunc("/api/schedule/requests", s.handleScheduleRequests)
 	mux.HandleFunc("/api/schedule/replace", s.handleScheduleReplace)
+	mux.HandleFunc("/api/schedule/approved", s.handleScheduleApproved)
 
 	host := cfg.Server.Host
 	if host == "" {
@@ -813,4 +814,37 @@ func (s *Server) handleScheduleReplace(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusConflict, map[string]interface{}{"error": "无待审批的申请可覆盖。（审批通过后可直接提交新申请）"})
+}
+
+// handleScheduleApproved — GET = view own approved rules; DELETE = revoke own rules.
+func (s *Server) handleScheduleApproved(w http.ResponseWriter, r *http.Request) {
+	clientName := clientCertCN(r)
+	if clientName == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]interface{}{"error": "mTLS client certificate required"})
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		cs, err := schedule.GetApprovedRules(s.dataDir(), clientName)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]interface{}{"error": err.Error()})
+			return
+		}
+		if cs == nil {
+			writeJSON(w, http.StatusOK, map[string]interface{}{"rules": nil, "message": "无生效规则"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"rules": cs.Rules})
+
+	case http.MethodDelete:
+		if err := schedule.RevokeApproved(s.dataDir(), clientName); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]interface{}{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "message": "规则已撤回"})
+
+	default:
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]interface{}{"error": "method not allowed"})
+	}
 }

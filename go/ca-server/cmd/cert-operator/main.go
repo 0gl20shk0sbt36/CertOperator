@@ -564,6 +564,10 @@ func cmdScheduleClient(args []string) {
   schedule replace            Replace existing pending request
      --server URL
      --rules JSON
+  schedule show-approved       Show own approved rules
+     --server URL
+  schedule revoke             Revoke own approved rules
+     --server URL
 `)
 		os.Exit(1)
 	}
@@ -611,6 +615,33 @@ func cmdScheduleClient(args []string) {
 			os.Exit(1)
 		}
 		req.Header.Set("Content-Type", "application/json")
+		resp, err := client.Do(req)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "❌ %v\n", err)
+			os.Exit(1)
+		}
+		defer resp.Body.Close()
+		data, _ := io.ReadAll(resp.Body)
+		fmt.Println(string(data))
+
+	case "show-approved":
+		client := makeClient(server, flags)
+		resp, err := client.Get(strings.TrimRight(server, "/") + "/api/schedule/approved")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "❌ %v\n", err)
+			os.Exit(1)
+		}
+		defer resp.Body.Close()
+		data, _ := io.ReadAll(resp.Body)
+		fmt.Println(string(data))
+
+	case "revoke":
+		client := makeClient(server, flags)
+		req, err := http.NewRequest(http.MethodDelete, strings.TrimRight(server, "/")+"/api/schedule/approved", nil)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "❌ %v\n", err)
+			os.Exit(1)
+		}
 		resp, err := client.Do(req)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "❌ %v\n", err)

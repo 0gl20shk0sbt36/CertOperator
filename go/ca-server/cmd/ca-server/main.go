@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/cert-operator/ca-server/v2/internal/ca"
@@ -956,6 +957,49 @@ func cmdSchedule(args []string) {
 			fmt.Printf("   规则%d: %s %s-%s ×%d 组:%s\n", i+1, days, rule.StartTime, rule.EndTime, rule.MaxCount, rule.Group)
 		}
 
+	case "list-approved":
+		approved, err := schedule.ListApproved(dataDir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "❌ %v\n", err)
+			os.Exit(1)
+		}
+		if len(approved) == 0 {
+			fmt.Println("(无生效规则)")
+		}
+		names := make([]string, 0, len(approved))
+		for n := range approved {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			cs := approved[name]
+			fmt.Printf("✅ %s\n", cs.ClientName)
+			for _, rule := range cs.Rules {
+				days := "每天"
+				if len(rule.Days) > 0 {
+					dayNames := []string{"日","一","二","三","四","五","六"}
+					var ds []string
+					for _, d := range rule.Days {
+						ds = append(ds, dayNames[d])
+					}
+					days = "周" + strings.Join(ds, ",")
+				}
+				fmt.Printf("   ├ %s %s-%s ×%d 组:%s\n", days, rule.StartTime, rule.EndTime, rule.MaxCount, rule.Group)
+			}
+			fmt.Println()
+		}
+
+	case "revoke-approved":
+		if len(rest) < 1 {
+			fmt.Fprintf(os.Stderr, "❌ Usage: ca-server schedule revoke-approved <client-name>\n")
+			os.Exit(1)
+		}
+		if err := schedule.RevokeApproved(dataDir, rest[0]); err != nil {
+			fmt.Fprintf(os.Stderr, "❌ %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("✅ 已撤回 %s 的免密规则\n", rest[0])
+
 	default:
 		printScheduleHelp()
 		os.Exit(1)
@@ -970,6 +1014,8 @@ Usage:
   ca-server schedule approve <client-name>    Approve a pending request
   ca-server schedule reject <client-name>     Reject a request
   ca-server schedule show <client-name>       Show request details
+  ca-server schedule list-approved            List all active approved rules
+  ca-server schedule revoke-approved <name>   Revoke a client's approved rules
 `)
 }
 
