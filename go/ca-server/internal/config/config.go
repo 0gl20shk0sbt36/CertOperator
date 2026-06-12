@@ -26,9 +26,10 @@ type CAConfig struct {
 
 // ServerConfig holds HTTPS server parameters.
 type ServerConfig struct {
-	Host string `json:"host"`
-	Port int    `json:"port"`
-	SAN  string `json:"san"`
+	Host         string `json:"host"`
+	Port         int    `json:"port"`
+	SAN          string `json:"san"`
+	AuditLogMaxMB int   `json:"audit_log_max_mb"` // 0 = use default (10)
 }
 
 // GroupConfig holds per-group TOTP, users, and extensions.
@@ -164,6 +165,7 @@ func applyDefaults(cfg *Config) {
 	if cfg.CA.ValidityMinutes == 0 { cfg.CA.ValidityMinutes = 60 }
 	if cfg.Server.Host == "" { cfg.Server.Host = "0.0.0.0" }
 	if cfg.Server.Port == 0 { cfg.Server.Port = 8443 }
+	if cfg.Server.AuditLogMaxMB <= 0 { cfg.Server.AuditLogMaxMB = 10 }
 	if cfg.RateLimit.MaxAttempts == 0 { cfg.RateLimit.MaxAttempts = 5 }
 	if cfg.RateLimit.WindowSeconds == 0 { cfg.RateLimit.WindowSeconds = 300 }
 	if cfg.TOTP.Issuer == "" { cfg.TOTP.Issuer = "CertOperator" }

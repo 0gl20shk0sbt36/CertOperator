@@ -126,7 +126,15 @@ fi
 if [[ -f "$INSTALL_DIR/data/ca_key" ]]; then
     info "CA 密钥已存在（data/ 保留完好）"
 else
-    info "CA 未初始化，请手动执行: cert-operator init"
+    echo ""
+    echo -e "${GREEN}=== 首次使用${NC}"
+    echo "  1. 初始化:            cert-operator init"
+    echo "     (自动创建 mTLS CA + 签发默认 admin 客户端证书)"
+    echo "  2. 获取 admin 证书包:  已生成在 data/clients/admin.tar.gz"
+    echo "  3. 部署到本地客户端:   tar -xzf .../admin.tar.gz -C ~/.hermes/certs/"
+    echo "  4. 签发更多客户端:     cert-operator clients issue <name> <granted-to>"
+    echo "  5. 启动服务:           systemctl start cert-operator"
+    echo ""
 fi
 
 # 拷贝卸载脚本

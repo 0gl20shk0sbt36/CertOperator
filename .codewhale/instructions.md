@@ -53,7 +53,9 @@ workspace/
 - v2.0.0 — Go 重写，零外部依赖
 - v2.1.0 — cert-sudo-check v3 磁盘扫描 + handler dict 修复
 - v2.2.0 — reset 命令 + mount namespace sudo 包装
-- v3.0.0 — dpkg-divert sudo wrapper、cert-sudo-check v9、agent 自动清理（当前版本）
+- v3.0.0 — dpkg-divert sudo wrapper、cert-sudo-check v9、agent 自动清理
+- v3.1.0 — 独立 mTLS 客户端证书（mTLS CA + 按客户端签发 + clients.json 管理）
+- v3.1.1 — TOTP 防重放漏洞修复（当前版本）
 
 ## 架构
 

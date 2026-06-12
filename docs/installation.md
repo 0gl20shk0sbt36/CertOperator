@@ -14,20 +14,19 @@
 
 ```bash
 # 下载安装器
-wget https://github.com/user/cert-operator/releases/download/v3.0.0/ca-server-install-v3.0.0.sh
+wget https://github.com/user/cert-operator/releases/download/v3.1.1/ca-server-install-v3.1.1.sh
 
 # 安装
-sudo bash ca-server-install-v3.0.0.sh
+sudo bash ca-server-install-v3.1.1.sh
 ```
 
 安装过程自动：
 1. 检测本机 IP（本地 + 公网）写入 config.json 的 SAN
 2. 创建 `cert-operator` 系统用户（无登录权限）
-3. 初始化 CA 密钥对
-4. 生成 HTTPS 自签证书（含所有检测到的 IP）
-5. 生成 mTLS 客户端证书
-6. 生成部署脚本 `deploy.sh`
-7. 安装 systemd 服务 `cert-operator`
+3. 安装 ca-server 二进制
+4. 安装 systemd 服务 `cert-operator`
+5. 部署 sudo-wrapper + cert-sudo-check + PAM 配置
+6. 部署后用户需手动执行 `cert-operator init` 完成初始化
 
 ### 方式二：从源码编译
 
@@ -40,7 +39,7 @@ sudo bash install.sh
 ### 方式三：手动解压安装
 
 ```bash
-tar -xzf ca-server-v3.0.0-linux-x86_64.tar.gz
+tar -xzf ca-server-v3.1.1-linux-x86_64.tar.gz
 cd ca-server
 sudo bash install.sh
 ```
@@ -83,33 +82,45 @@ ssh user@client "bash ~/deploy.sh"
 ### 安装 CLI
 
 ```bash
-tar -xzf cert-operator-v3.0.0-linux-x86_64.tar.gz
+tar -xzf cert-operator-v3.1.1-linux-x86_64.tar.gz
 sudo mv cert-operator/cert-operator /usr/local/bin/
 cert-operator version   # 确认版本
 ```
 
-### 部署客户端证书
+### 部署客户端证书（mTLS）
 
-从 CA 服务器获取并运行部署脚本：
+从 CA 服务器获取客户端证书包并解压：
 
 ```bash
-scp root@ca-server:/opt/ca_server/data/dist/deploy.sh ./
-bash deploy.sh
+# 查看已签发的客户端列表（需要在 CA 服务器上）
+cert-operator clients list
+
+# 从服务器复制证书包到本地
+scp root@ca-server:/opt/ca_server/data/clients/<name>.tar.gz ./
+
+# 用 CLI 部署
+cert-operator deploy-client <name>.tar.gz
+
+# 或手动解压到证书目录
+tar -xzf <name>.tar.gz -C ~/.hermes/certs/
 ```
 
-deploy.sh 会部署三个文件到 `~/.hermes/certs/`：
+证书包解压后：
 
 ```
 ~/.hermes/certs/
-├── ca-https-cert.pem   # CA 服务器 HTTPS 证书（用于验证服务端）
-├── client.cert         # mTLS 客户端证书（CA 验证客户端身份）
-└── client.key          # mTLS 客户端私钥（权限 600）
+├── ca-https-cert.pem   # 服务端 HTTPS 证书（验证服务端身份）
+├── <name>.key          # 客户端私钥（权限 600）
+└── <name>.cert         # 客户端证书（mTLS CA 签发）
 ```
+
+> 每个客户端使用独立 mTLS 证书，服务端通过 `clients.json` 管理。
+> 撤销证书只需 `cert-operator clients revoke <name>`，立即生效。
 
 ### 安装 Hermes 插件
 
 ```bash
-tar -xzf cert-operator-plugin-v3.0.0.tar.gz
+tar -xzf cert-operator-plugin-v3.1.1.tar.gz
 mkdir -p ~/.hermes/plugins
 cp -r cert-operator-plugin ~/.hermes/plugins/
 # 重启 Hermes，工具自动出现
@@ -228,18 +239,19 @@ rm -rf ~/.hermes/plugins/cert-operator-plugin
 
 ```bash
 # ===== CA 服务器 =====
-wget https://github.com/user/cert-operator/releases/download/v3.0.0/ca-server-install-v3.0.0.sh
-sudo bash ca-server-install-v3.0.0.sh
+wget https://github.com/user/cert-operator/releases/download/v3.1.1/ca-server-install-v3.1.1.sh
+sudo bash ca-server-install-v3.1.1.sh
 cert-operator groups create admin
 cert-operator groups users admin add root
 cert-operator groups totp admin set
 sudo systemctl start cert-operator
 
 # ===== 客户端 =====
-tar -xzf cert-operator-v3.0.0-linux-x86_64.tar.gz
+tar -xzf cert-operator-v3.1.1-linux-x86_64.tar.gz
 sudo mv cert-operator/cert-operator /usr/local/bin/
-scp root@ca-server:/opt/ca_server/data/dist/deploy.sh ./
-bash deploy.sh
+cert-operator clients list
+scp root@ca-server:/opt/ca_server/data/clients/<name>.tar.gz ./
+cert-operator deploy-client <name>.tar.gz
 
 # ===== 目标服务器 =====
 scp root@ca-server:/opt/ca_server/data/dist/deploy-sudo-wrapper.sh root@target:/tmp/

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
@@ -15,7 +17,7 @@ import (
 	"time"
 )
 
-const VERSION = "3.0.0"
+const VERSION = "3.1.1"
 
 func main() {
 	if len(os.Args) < 2 || os.Args[1] == "--help" || os.Args[1] == "-h" {
@@ -35,6 +37,8 @@ func main() {
 		cmdSSH(args)
 	case "deploy":
 		cmdDeploy(args)
+	case "deploy-client":
+		cmdDeployClient(args)
 	case "health":
 		cmdHealth(args)
 	case "version":
@@ -61,7 +65,8 @@ func printUsage() {
 Usage:
   cert-operator get-cert <server> <totp> <name> [flags]   Get SSH cert from CA
   cert-operator ssh <host> <user> <key> [command]          SSH with certificate
-  cert-operator deploy [script]                            Deploy client certs
+  cert-operator deploy [script]                            Deploy client certs (legacy)
+  cert-operator deploy-client <package.tar.gz>             Deploy mTLS client cert package
   cert-operator version                                    Show version
 
 Get-cert flags:
@@ -395,6 +400,82 @@ func cmdDeploy(args []string) {
 		os.Exit(1)
 	}
 	fmt.Println("✅ 客户端证书部署完成")
+}
+
+// ---- deploy-client --------------------------------------------------------
+
+func cmdDeployClient(args []string) {
+	if len(args) < 1 {
+		fmt.Fprintf(os.Stderr, "用法: cert-operator deploy-client <package.tar.gz>\n")
+		fmt.Fprintf(os.Stderr, "  解压 mTLS 客户端证书包到 ~/.hermes/certs/\n")
+		os.Exit(1)
+	}
+	tarFile := args[0]
+
+	if _, err := os.Stat(tarFile); os.IsNotExist(err) {
+		fmt.Fprintf(os.Stderr, "❌ 证书包不存在: %s\n", tarFile)
+		os.Exit(1)
+	}
+
+	certDir := hermesDir()
+	os.MkdirAll(certDir, 0700)
+
+	f, err := os.Open(tarFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "❌ 无法打开: %v\n", err)
+		os.Exit(1)
+	}
+	defer f.Close()
+
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "❌ 无法解压缩: %v\n", err)
+		os.Exit(1)
+	}
+	defer gz.Close()
+
+	tr := tar.NewReader(gz)
+	count := 0
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "❌ tar 读取错误: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Prevent path traversal
+		name := filepath.Base(hdr.Name)
+		dest := filepath.Join(certDir, name)
+
+		switch hdr.Typeflag {
+		case tar.TypeReg:
+			data, err := io.ReadAll(tr)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "❌ 读取 %s: %v\n", hdr.Name, err)
+				os.Exit(1)
+			}
+			var mode os.FileMode = 0644
+			if strings.HasSuffix(name, ".key") {
+				mode = 0600
+			}
+			if err := os.WriteFile(dest, data, mode); err != nil {
+				fmt.Fprintf(os.Stderr, "❌ 写入 %s: %v\n", dest, err)
+				os.Exit(1)
+			}
+			fmt.Printf("   ✅ %s → %s\n", hdr.Name, dest)
+			count++
+		}
+	}
+
+	if count == 0 {
+		fmt.Fprintf(os.Stderr, "❌ 证书包为空\n")
+		os.Exit(1)
+	}
+
+	fmt.Printf("\n✅ 客户端证书部署完成 (%d 文件)\n", count)
 }
 
 // ---- helpers ------------------------------------------------------------

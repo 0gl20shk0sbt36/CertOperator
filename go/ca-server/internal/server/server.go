@@ -13,17 +13,22 @@
 package server
 
 import (
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/cert-operator/ca-server/v2/internal/ca"
 	"github.com/cert-operator/ca-server/v2/internal/cert"
 	"github.com/cert-operator/ca-server/v2/internal/config"
 	"github.com/cert-operator/ca-server/v2/internal/ratelimit"
@@ -32,7 +37,7 @@ import (
 
 const (
 	// Version embedded at build time; overridden by ldflags or main.go's VERSION.
-	BuiltVersion = "3.0.0"
+	BuiltVersion = "3.1.1"
 	name         = "cert-operator"
 )
 
@@ -44,14 +49,22 @@ type Server struct {
 	ConfigPath string
 	NoMTLS     bool
 
-	// Paths for TLS material (set before Serve).
-	CAKeyPath     string
-	CAKeyPubPath  string
-	HTTPSCertPath string
-	HTTPSKeyPath  string
+	// Paths for TLS material (set before Serve).  ClientCertPath points to the mTLS CA cert.
+	CAKeyPath      string
+	CAKeyPubPath   string
+	HTTPSCertPath  string
+	HTTPSKeyPath   string
 	ClientCertPath string
 
 	limiter *ratelimit.Limiter
+
+	// TOTP replay protection: sha256(secret|code) → expiry
+	totpMu     sync.Mutex
+	usedTOTPs  map[string]time.Time
+
+	// Audit log rotation
+	auditMu          sync.Mutex
+	auditLogMaxBytes int64
 }
 
 // Serve starts the HTTPS server and blocks until the server exits.
@@ -62,13 +75,23 @@ func (s *Server) Serve() error {
 	}
 
 	s.limiter = ratelimit.New()
+	s.usedTOTPs = make(map[string]time.Time)
+	s.auditLogMaxBytes = int64(cfg.Server.AuditLogMaxMB) * 1024 * 1024
 
-	// Background cleanup of stale rate-limit entries every 5 minutes.
+	// Background cleanup every 5 minutes: stale rate-limit + expired TOTP hashes.
 	go func() {
 		ticker := time.NewTicker(5 * time.Minute)
 		defer ticker.Stop()
 		for range ticker.C {
 			s.limiter.Clean(10 * time.Minute)
+			s.totpMu.Lock()
+			now := time.Now()
+			for k, expiry := range s.usedTOTPs {
+				if now.After(expiry) {
+					delete(s.usedTOTPs, k)
+				}
+			}
+			s.totpMu.Unlock()
 		}
 	}()
 
@@ -95,14 +118,39 @@ func (s *Server) Serve() error {
 	if !s.NoMTLS {
 		tlsCfg.ClientAuth = tls.RequireAndVerifyClientCert
 		pool := x509.NewCertPool()
-		clientCert, err := os.ReadFile(s.ClientCertPath)
+		mtlsCACert, err := os.ReadFile(s.ClientCertPath)
 		if err != nil {
-			return fmt.Errorf("failed to read client CA cert: %w", err)
+			return fmt.Errorf("failed to read mTLS CA cert: %w", err)
 		}
-		if !pool.AppendCertsFromPEM(clientCert) {
-			return fmt.Errorf("failed to parse client CA cert")
+		if !pool.AppendCertsFromPEM(mtlsCACert) {
+			return fmt.Errorf("failed to parse mTLS CA cert")
 		}
 		tlsCfg.ClientCAs = pool
+
+		// VerifyPeerCertificate: after standard CA-chain verification,
+		// check that the client certificate is present in clients.json
+		// (not revoked) and not expired.
+		tlsCfg.VerifyPeerCertificate = func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
+			if len(rawCerts) == 0 {
+				return fmt.Errorf("no client certificate provided")
+			}
+			cert, err := x509.ParseCertificate(rawCerts[0])
+			if err != nil {
+				return fmt.Errorf("parse client cert: %w", err)
+			}
+			cfg, cfgErr := config.Load(s.ConfigPath)
+			if cfgErr != nil {
+				return fmt.Errorf("load config: %w", cfgErr)
+			}
+			ok, err := ca.IsClientAuthorized(cfg, cert.SerialNumber)
+			if err != nil {
+				return fmt.Errorf("check authorization: %w", err)
+			}
+			if !ok {
+				return fmt.Errorf("client certificate revoked or expired (serial %d)", cert.SerialNumber)
+			}
+			return nil
+		}
 	}
 
 	srv := &http.Server{
@@ -285,6 +333,31 @@ func (s *Server) handleGetCert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// TOTP replay protection: key = hash(secret|code) + 30s step.
+	// Covers steps N-1, N, N+1 (matches the ±1 verify window).
+	// Same code at a different step (≥1 step later) is allowed — so a
+	// save-failure user only waits for the TOTP app to tick over (~30s).
+	h := sha256.Sum256([]byte(gcfg.TOTPSecret + "|" + totpCode))
+	hash := hex.EncodeToString(h[:])
+	step := time.Now().Unix() / 30
+	s.totpMu.Lock()
+	for i := int64(-1); i <= 1; i++ {
+		stepKey := hash + ":" + strconv.FormatInt(step+i, 10)
+		if _, exists := s.usedTOTPs[stepKey]; exists {
+			s.totpMu.Unlock()
+			writeJSON(w, http.StatusUnauthorized, map[string]interface{}{
+				"success": false,
+				"error":   "TOTP 码已被使用，请等待新码",
+			})
+			return
+		}
+	}
+	for i := int64(-1); i <= 1; i++ {
+		stepKey := hash + ":" + strconv.FormatInt(step+i, 10)
+		s.usedTOTPs[stepKey] = time.Now().Add(90 * time.Second)
+	}
+	s.totpMu.Unlock()
+
 	// Issue cert
 	validityMinutes := gcfg.ValidityMinutes
 	if validityMinutes <= 0 {
@@ -312,6 +385,30 @@ func (s *Server) handleGetCert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Audit log: who requested what and when
+	// Extract applicant info from mTLS client certificate.
+	applicantName := "unknown"
+	applicantGrantedTo := "unknown"
+	if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
+		subj := r.TLS.PeerCertificates[0].Subject
+		applicantName = subj.CommonName
+		if len(subj.OrganizationalUnit) > 0 {
+			applicantGrantedTo = subj.OrganizationalUnit[0]
+		}
+	}
+	if err := s.writeAuditLog(map[string]interface{}{
+		"time":         time.Now().UTC().Format(time.RFC3339),
+		"client_ip":    clientAddr,
+		"applicant":    applicantName,
+		"granted_to":   applicantGrantedTo,
+		"group":        groupName,
+		"user":         allowedUsers,
+		"serial":       result["serial"],
+		"expires_at":   result["expires_at"],
+	}); err != nil {
+		log.Printf("audit log write error: %v", err)
+	}
+
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"success":        true,
 		"ssh_private_key": result["ssh_private_key"],
@@ -319,6 +416,42 @@ func (s *Server) handleGetCert(w http.ResponseWriter, r *http.Request) {
 		"serial":         result["serial"],
 		"expires_at":     result["expires_at"],
 	})
+}
+
+// auditLogPath returns the path to the certificate issuance audit log.
+func (s *Server) auditLogPath() string {
+	dataDir := filepath.Dir(s.ConfigPath)
+	return filepath.Join(dataDir, "data", "cert-audit.log")
+}
+
+// writeAuditLog appends a JSON line to the audit log file with size-based
+// rotation.  Thread-safe (mutex-protected rotate + append).
+func (s *Server) writeAuditLog(fields map[string]interface{}) error {
+	data, err := json.Marshal(fields)
+	if err != nil {
+		return err
+	}
+
+	s.auditMu.Lock()
+	defer s.auditMu.Unlock()
+
+	path := s.auditLogPath()
+
+	// Rotate if current file exceeds the configured limit.
+	if s.auditLogMaxBytes > 0 {
+		if fi, err := os.Stat(path); err == nil && fi.Size() > s.auditLogMaxBytes {
+			os.Rename(path, path+".1")
+		}
+	}
+
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	_, err = f.Write(append(data, '\n'))
+	return err
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {

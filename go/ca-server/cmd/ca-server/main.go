@@ -62,6 +62,8 @@ func main() {
 		cmdUsers(args)
 	case "groups":
 		cmdGroups(args)
+	case "clients":
+		cmdClients(args)
 	case "renew-cert":
 		cmdRenewCert(args)
 	case "reset":
@@ -84,11 +86,12 @@ Usage:
   ca-server --version      Show version
 
 Commands:
-  init                     Initialize CA (keys, HTTPS cert, client cert, deploy)
+  init                     Initialize CA (keys, HTTPS cert, mTLS CA, admin client)
   serve [flags]            Start HTTPS API server
   pubkey                   Show CA public key
   totp [--verify|--regenerate]  TOTP management (default group)
   groups [action] [args]   Group management (see "groups --help")
+  clients [action] [args]  mTLS client cert management (issue/list/revoke/show)
   renew-cert               Regenerate HTTPS certificate
   reset <mode>             Reset components (ca|https|client|totp <grp>|group <grp>|all)
   version                  Show version
@@ -203,14 +206,9 @@ func cmdServe(args []string) {
 	}
 
 	if !*noMtls {
-		clientCert := ca.ClientCertPath(cfg)
-		clientKey := ca.ClientKeyPath(cfg)
-		if stat(clientCert) != nil {
-			fmt.Fprintf(os.Stderr, "❌ mTLS client cert not found — re-run init or use --no-mtls\n")
-			os.Exit(1)
-		}
-		if stat(clientKey) != nil {
-			fmt.Fprintf(os.Stderr, "❌ mTLS client key not found — re-run init or use --no-mtls\n")
+		mtlsCACert := ca.MTLSCACertPath(cfg)
+		if stat(mtlsCACert) != nil {
+			fmt.Fprintf(os.Stderr, "❌ mTLS CA cert not found — re-run init or use --no-mtls\n")
 			os.Exit(1)
 		}
 	}
@@ -222,7 +220,7 @@ func cmdServe(args []string) {
 		CAKeyPubPath:   caPub,
 		HTTPSCertPath:  httpsCert,
 		HTTPSKeyPath:   httpsKey,
-		ClientCertPath: ca.ClientCertPath(cfg),
+		ClientCertPath: ca.MTLSCACertPath(cfg),
 	}
 
 	// Override host/port from flags
@@ -734,6 +732,122 @@ func cmdGroups(args []string) {
 		fmt.Fprintf(os.Stderr, "   Available: list create delete users totp config\n")
 		os.Exit(1)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// clients — mTLS client certificate lifecycle
+// ---------------------------------------------------------------------------
+
+func cmdClients(args []string) {
+	if len(args) == 0 {
+		printClientsHelp()
+		os.Exit(1)
+	}
+
+	action := args[0]
+	rest := args[1:]
+	cfg := mustLoadConfig()
+
+	switch action {
+	case "issue":
+		cmdClientsIssue(cfg, rest)
+	case "revoke":
+		if len(rest) < 1 {
+			fmt.Fprintf(os.Stderr, "❌ Usage: ca-server clients revoke <name>\n")
+			os.Exit(1)
+		}
+		if err := ca.RevokeClientCert(cfg, rest[0]); err != nil {
+			fmt.Fprintf(os.Stderr, "❌ %v\n", err)
+			os.Exit(1)
+		}
+	case "list":
+		records, err := ca.ListClientCerts(cfg)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "❌ %v\n", err)
+			os.Exit(1)
+		}
+		if len(records) == 0 {
+			fmt.Println("(no clients issued)")
+		} else {
+			for _, r := range records {
+				fmt.Printf("📋 %s\n", r.Name)
+				fmt.Printf("   Granted to: %s\n", r.GrantedTo)
+				fmt.Printf("   Serial:     %d\n", r.Serial)
+				fmt.Printf("   Expires:    %s\n", r.ExpiresAt)
+				if r.SAN != "" {
+					fmt.Printf("   SAN:        %s\n", r.SAN)
+				}
+				if r.User != "" {
+					fmt.Printf("   User:       %s\n", r.User)
+				}
+				fmt.Println()
+			}
+		}
+	case "show":
+		if len(rest) < 1 {
+			fmt.Fprintf(os.Stderr, "❌ Usage: ca-server clients show <name>\n")
+			os.Exit(1)
+		}
+		r, err := ca.GetClientCert(cfg, rest[0])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "❌ %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("📋 %s\n", r.Name)
+		fmt.Printf("   Granted to:  %s\n", r.GrantedTo)
+		fmt.Printf("   Serial:      %d\n", r.Serial)
+		fmt.Printf("   Issued:      %s\n", r.IssuedAt)
+		fmt.Printf("   Expires:     %s\n", r.ExpiresAt)
+		if r.SAN != "" {
+			fmt.Printf("   SAN:         %s\n", r.SAN)
+		}
+		if r.User != "" {
+			fmt.Printf("   User:        %s\n", r.User)
+		}
+		fmt.Printf("   Cert file:   %s\n", r.CertFile)
+	default:
+		fmt.Fprintf(os.Stderr, "❌ Unknown action: %s\n", action)
+		printClientsHelp()
+		os.Exit(1)
+	}
+}
+
+func cmdClientsIssue(cfg *config.Config, args []string) {
+	fs := flag.NewFlagSet("clients-issue", flag.ExitOnError)
+	validity := fs.Int("validity", 365, "Validity in days")
+	san := fs.String("san", "", "SAN: DNS:x,IP:y")
+	user := fs.String("user", "", "SSH user name")
+	fs.Parse(args)
+	pos := fs.Args()
+
+	if len(pos) < 2 {
+		fmt.Fprintf(os.Stderr, "❌ Usage: ca-server clients issue <name> <granted-to> [--validity DAYS] [--san DNS:x,IP:y] [--user NAME]\n")
+		os.Exit(1)
+	}
+
+	tarPath, err := ca.IssueClientCert(cfg, pos[0], pos[1], *validity, strings.TrimSpace(*san), strings.TrimSpace(*user))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "❌ Issue failed: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("\n📦 Package ready: %s\n", tarPath)
+	fmt.Println("   Deploy to client: scp <this-package> user@client:/tmp/ && tar -xzf /tmp/<pkg> -C ~/.hermes/certs/")
+}
+
+func printClientsHelp() {
+	fmt.Fprintf(os.Stderr, `Client certificate management:
+
+Usage:
+  ca-server clients issue <name> <granted-to> [flags]   Issue client mTLS cert
+  ca-server clients list                                  List all issued clients
+  ca-server clients show <name>                           Show client details
+  ca-server clients revoke <name>                         Revoke (remove from roster)
+
+Issue flags:
+  --validity DAYS    Validity in days (default 365)
+  --san DNS:x,IP:y   Optional Subject Alternative Names
+  --user NAME        Associated SSH user name
+`)
 }
 
 // ---------------------------------------------------------------------------

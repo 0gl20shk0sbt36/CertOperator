@@ -28,10 +28,7 @@ func Init(cfg *config.Config) error {
 	caKeyPubPath := filepath.Join(dataDir(cfg), "ca_key.pub")
 	httpsKeyPath := filepath.Join(dataDir(cfg), "https_key.pem")
 	httpsCertPath := filepath.Join(dataDir(cfg), "https_cert.pem")
-	clientKeyPath := filepath.Join(dataDir(cfg), "client.key")
-	clientCertPath := filepath.Join(dataDir(cfg), "client.cert")
 	serialPath := filepath.Join(dataDir(cfg), "serial.txt")
-	distDir := filepath.Join(dataDir(cfg), "dist")
 
 	if err := os.MkdirAll(dataDir(cfg), 0755); err != nil {
 		return fmt.Errorf("create data dir: %w", err)
@@ -94,15 +91,18 @@ func Init(cfg *config.Config) error {
 	}
 	fmt.Printf("   ✅ Serial counter: %s (initial value 0)\n", serialPath)
 
-	// 4. Generate mTLS client certificate ------------------------------------
-	if err := generateClientCert(clientKeyPath, clientCertPath); err != nil {
-		return err
+	// 4. Generate mTLS CA (replaces old shared self-signed client cert) -------
+	if err := GenerateMTLSCA(cfg); err != nil {
+		return fmt.Errorf("mTLS CA: %w", err)
 	}
 
-	// 5. Generate deploy script ----------------------------------------------
-	if err := generateDeployScript(distDir, httpsCertPath, clientCertPath, clientKeyPath); err != nil {
-		return err
+	// 5. Create default admin client certificate -----------------------------
+	fmt.Println("🔨 Issuing default admin mTLS client certificate...")
+	adminPack, err := IssueClientCert(cfg, "admin", "admin (default)", 365, "", "root")
+	if err != nil {
+		return fmt.Errorf("default client cert: %w", err)
 	}
+	fmt.Printf("   📦 Admin client package: %s\n", adminPack)
 
 	// 6. Target server configuration guide -----------------------------------
 	fmt.Println()
@@ -130,9 +130,6 @@ func Init(cfg *config.Config) error {
 	fmt.Println(strings.TrimSpace(string(caPub)))
 	fmt.Println(strings.Repeat("-", 60))
 	fmt.Println()
-	fmt.Println("📦 Client deploy package (three files, one transfer):")
-	fmt.Printf("  scp %s user@client:~\n", filepath.Join(distDir, "deploy.sh"))
-	fmt.Printf("  Client runs: bash ~/deploy.sh\n")
 
 	return nil
 }
@@ -166,23 +163,24 @@ func ResetHTTPS(cfg *config.Config) error {
 	return nil
 }
 
-// ResetClient regenerates the mTLS client cert + deploy script.
+// ResetClient regenerates the mTLS CA key pair.  All previously issued client
+// certificates become invalid immediately.
 func ResetClient(cfg *config.Config) error {
-	clientKeyPath := filepath.Join(dataDir(cfg), "client.key")
-	clientCertPath := filepath.Join(dataDir(cfg), "client.cert")
-	distDir := filepath.Join(dataDir(cfg), "dist")
-	httpsCertPath := filepath.Join(dataDir(cfg), "https_cert.pem")
+	// Delete old mTLS CA
+	mtlsKey := mtlsCAKeyPath(cfg)
+	mtlsCert := mtlsCACertPath(cfg)
+	for _, p := range []string{mtlsKey, mtlsCert} {
+		os.Remove(p)
+	}
 
-	if err := generateClientCert(clientKeyPath, clientCertPath); err != nil {
+	// Delete clients roster
+	os.Remove(clientsDBPath(cfg))
+
+	// Regenerate
+	if err := GenerateMTLSCA(cfg); err != nil {
 		return err
 	}
-	fmt.Printf("   ✅ Client key:  %s\n", clientKeyPath)
-	fmt.Printf("   ✅ Client cert: %s\n", clientCertPath)
-
-	if err := generateDeployScript(distDir, httpsCertPath, clientCertPath, clientKeyPath); err != nil {
-		return fmt.Errorf("deploy script: %w", err)
-	}
-	fmt.Printf("   ✅ Deploy script: %s\n", filepath.Join(distDir, "deploy.sh"))
+	fmt.Println("   ⚠️  所有已签发的 mTLS 客户端证书立即失效！")
 	return nil
 }
 
@@ -331,7 +329,6 @@ func DataDir(cfg *config.Config) string {
 func RenewCert(cfg *config.Config) error {
 	httpsKeyPath := filepath.Join(dataDir(cfg), "https_key.pem")
 	httpsCertPath := filepath.Join(dataDir(cfg), "https_cert.pem")
-	distDir := filepath.Join(dataDir(cfg), "dist")
 
 	if _, err := os.Stat(httpsKeyPath); err != nil {
 		return fmt.Errorf("HTTPS key not found — run init first")
@@ -365,12 +362,10 @@ func RenewCert(cfg *config.Config) error {
 	os.Chmod(httpsCertPath, 0644)
 	fmt.Printf("   ✅ HTTPS cert updated: %s\n", httpsCertPath)
 
-	// Regenerate deploy script (embeds HTTPS cert)
-	clientCertPath := filepath.Join(dataDir(cfg), "client.cert")
-	clientKeyPath := filepath.Join(dataDir(cfg), "client.key")
-	if err := generateDeployScript(distDir, httpsCertPath, clientCertPath, clientKeyPath); err != nil {
-		return err
-	}
+	// HTTPS cert changed — existing client packages contain the old cert.
+	// Admins should re-issue client certs or update ca-https-cert.pem on clients.
+	fmt.Println("   ⚠️  HTTPS cert changed. Existing client packages contain old cert.")
+	fmt.Println("   Run 'ca-server clients issue' to regenerate client packages.")
 	return nil
 }
 

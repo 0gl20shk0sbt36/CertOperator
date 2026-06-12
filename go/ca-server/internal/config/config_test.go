@@ -116,4 +116,7 @@ func TestDefaults(t *testing.T) {
 	if cfg.TOTP.Account != "admin" {
 		t.Errorf("default TOTP.Account = %q", cfg.TOTP.Account)
 	}
+	if cfg.Server.AuditLogMaxMB != 10 {
+		t.Errorf("default AuditLogMaxMB = %d, want 10", cfg.Server.AuditLogMaxMB)
+	}
 }
