@@ -171,24 +171,36 @@
     {
       "id": "admin-day",
       "priority": 10,
+      "clients": ["laptop-alice", "desktop-bob"],
       "windows": [
         {"weekdays": [1,2,3,4,5], "start": "09:00", "end": "18:00"}
       ],
-      "config": { "totp_required": false, "max_count": 50 }
+      "config": { "mode": "passwordless", "max_count": 50 }
     },
     {
       "id": "admin-night",
       "priority": 100,
+      "clients": null,
       "windows": [
-        {"weekdays": [1,2,3,4,5], "start": "18:00", "end": "09:00"}
+        {"weekdays": [1,2,3,4,5], "start": "18:00", "end": "23:59"}
       ],
-      "config": { "totp_required": true, "max_count": 10 }
+      "config": { "mode": "totp", "max_count": 10 }
+    },
+    {
+      "id": "admin-deny-intern",
+      "priority": 5,
+      "clients": ["intern-alice"],
+      "windows": [
+        {"weekdays": [1,2,3,4,5], "start": "09:00", "end": "18:00"}
+      ],
+      "config": { "mode": "deny" }
     }
   ],
   "judge_rules": [
     {
       "id": "admin-sudo-day",
       "priority": 10,
+      "clients": null,
       "windows": [
         {"weekdays": [1,2,3,4,5], "start": "09:00", "end": "12:00"},
         {"weekdays": [6], "start": "09:00", "end": "12:00"}
@@ -199,6 +211,36 @@
 }
 ```
 
+### issue_rules 的三种签发模式
+
+| mode | 行为 |
+|------|------|
+| `passwordless` | 免 TOTP，直接签发 |
+| `totp` | 需要 TOTP 验证 |
+| `deny` | 无论如何拒绝签发（即使有 TOTP） |
+
+### clients 字段
+
+| clients 值 | 含义 |
+|-----------|------|
+| `null` 或 `[]` | 对所有客户端生效 |
+| `["laptop-alice"]` | 只对指定客户端生效 |
+| 多条规则按优先级叠加 | 高优先级规则的 clients 指定覆盖低优先级 |
+
+clients 基于 mTLS 证书的 CN 进行匹配。签发时服务端提取客户端证书的 CN，与规则的 clients 字段比对。
+
+### 规则示例：实习生禁止时段
+
+```
+规则 A: priority=10, clients=null,   09-18: mode=passwordless  → 所有人免密
+规则 B: priority=5,  clients=[intern], 09-18: mode=deny         ← 高优先级，拒绝实习生
+
+结果:
+  09-18 时段:
+    正常用户: passwordless（免密）✅
+    实习生:   deny（禁止签发）❌
+```
+
 ### 执行层（自动编译）
 
 规则配置层输入，按优先级编译。相同 priority 的按配置顺序靠后覆盖靠前。遇到冲突的时间窗口自动拆分为不冲突的多个时间段。每个时间段对应唯一的 issue 和 judge 状态。
@@ -207,7 +249,7 @@
 
 - 不允许跨天
 - 时间窗口左闭右开 [start, end)，精确到分钟
-- 默认规则：未匹配时 `totp_required=true, sudo_allowed=false, max_count=0`
+- 默认规则：未匹配时 `mode=totp, sudo_allowed=false, max_count=0`
 
 ---
 
