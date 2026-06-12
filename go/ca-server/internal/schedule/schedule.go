@@ -18,8 +18,9 @@ import (
 
 // ---- data model ------------------------------------------------------------
 
-// Rule describes one passwordless time window.
+// Rule describes one passwordless / scheduled-cert time window.
 type Rule struct {
+	Name      string `json:"name"`       // rule name (unique per request, e.g. "daily-backup")
 	Days      []int  `json:"days"`       // 0=Sun..6=Sat; nil or empty = every day
 	StartTime string `json:"start_time"` // "HH:MM"
 	EndTime   string `json:"end_time"`   // "HH:MM"
@@ -314,7 +315,7 @@ func IncrementUsed(dataDir string, cs *ClientSchedules, ruleIdx int) error {
 
 // ---- approved rules query & revoke ---------------------------------------
 
-// GetApprovedRules returns the currently active rules for a client.
+// GetApprovedRules returns all currently active rules for a client.
 func GetApprovedRules(dataDir, clientName string) (*ClientSchedules, error) {
 	mu.Lock()
 	defer mu.Unlock()
@@ -328,6 +329,28 @@ func GetApprovedRules(dataDir, clientName string) (*ClientSchedules, error) {
 		return nil, nil
 	}
 	return cs, nil
+}
+
+// GetApprovedRuleByName returns a single approved rule matching the given name.
+// Returns nil if not found.
+func GetApprovedRuleByName(dataDir, clientName, ruleName string) (*Rule, *ClientSchedules, error) {
+	mu.Lock()
+	defer mu.Unlock()
+
+	app, err := loadApproved(dataDir)
+	if err != nil {
+		return nil, nil, err
+	}
+	cs, ok := app[clientName]
+	if !ok {
+		return nil, nil, nil
+	}
+	for i := range cs.Rules {
+		if cs.Rules[i].Name == ruleName {
+			return &cs.Rules[i], cs, nil
+		}
+	}
+	return nil, nil, nil
 }
 
 // ListApproved returns all clients' active approved schedules.
@@ -378,7 +401,15 @@ func ValidateRules(rules []Rule) error {
 	if len(rules) == 0 {
 		return fmt.Errorf("at least one rule is required")
 	}
+	seen := make(map[string]bool)
 	for i, r := range rules {
+		if strings.TrimSpace(r.Name) == "" {
+			return fmt.Errorf("rule %d: name is required", i)
+		}
+		if seen[r.Name] {
+			return fmt.Errorf("duplicate rule name %q", r.Name)
+		}
+		seen[r.Name] = true
 		if r.MaxCount <= 0 {
 			return fmt.Errorf("rule %d: max_count must be > 0", i)
 		}

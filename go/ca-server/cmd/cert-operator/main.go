@@ -73,6 +73,7 @@ Usage:
   cert-operator deploy-client <package.tar.gz>             Deploy mTLS client cert package
   cert-operator schedule <action> [flags]                  Schedule mgmt (submit/show/replace)
   cert-operator get-scheduled-cert [flags]                 Get time-window SSH cert
+     --schedule-name NAME                                   Rule name from approved schedule
   cert-operator version                                    Show version
 
 Get-cert flags:
@@ -555,17 +556,18 @@ func cmdGetScheduledCert(args []string) {
 		fmt.Fprintf(os.Stderr, "❌ --server is required\n")
 		os.Exit(1)
 	}
-	rulesJSON := flags["--rules"]
-	if rulesJSON == "" {
-		fmt.Fprintf(os.Stderr, "❌ --rules is required\n")
-		fmt.Fprintf(os.Stderr, "   Example: --rules '{\"group\":\"admin\",\"start_time\":\"07:00\",\"end_time\":\"08:00\",\"days\":[1,3,5]}'\n")
+	scheduleName := flags["--schedule-name"]
+	if scheduleName == "" {
+		fmt.Fprintf(os.Stderr, "❌ --schedule-name is required\n")
+		fmt.Fprintf(os.Stderr, "   Must match a rule name from an approved schedule request.\n")
 		os.Exit(1)
 	}
 
+	requestJSON := fmt.Sprintf(`{"name":"%s"}`, scheduleName)
 	client := makeClient(server, flags)
 
 	resp, err := client.Post(strings.TrimRight(server, "/")+"/api/get-scheduled-cert",
-		"application/json", strings.NewReader(rulesJSON))
+		"application/json", strings.NewReader(requestJSON))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "❌ %v\n", err)
 		os.Exit(1)
@@ -621,7 +623,7 @@ func cmdScheduleClient(args []string) {
 		fmt.Fprintf(os.Stderr, `Schedule commands:
   schedule submit             Submit a passwordless schedule request
      --server URL             CA server URL
-     --rules JSON             Rules JSON: [{"days":[1,3,5],"start_time":"07:00","end_time":"08:00","max_count":10,"group":"admin"}]
+     --rules JSON             Rules JSON: [{"name":"daily-backup","days":[1,3,5],"start_time":"07:00","end_time":"08:00","max_count":10,"group":"admin"}]
   schedule show               Show current request status
      --server URL
   schedule replace            Replace existing pending request
