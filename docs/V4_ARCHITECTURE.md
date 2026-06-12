@@ -247,7 +247,157 @@ CA 端 VerifyPeerCertificate → 检查证书 CN 前缀 "agent-<target>"
 
 ---
 
-## 五、证书扩展字段
+## 五、cert-sudo-check 实现
+
+### 语言选择
+
+**Go**。编译为静态 ELF 二进制，取代当前的 bash 版。
+
+原因：
+- 交叉编译零配置（x86_64、arm64、loongarch64）
+- 直接连 SSH agent socket（`golang.org/x/crypto/ssh/agent`），不 fork 子进程
+- 标准库支持 JSON 解析和文件操作
+- 源码不直接暴露在目标服务器上
+
+### 文件权限
+
+```
+/usr/local/bin/cert-sudo-check
+  owner:   root:root
+  mode:    755（rwxr-xr-x）
+  普通用户可执行，不可修改
+  root 可修改（需要时替换二进制）
+```
+
+### 源码保护
+
+编译后的二进制为 ELF 格式，普通用户无法看到源码逻辑。对比 bash 版（纯文本）：
+
+```
+bash 版: 用户 cat 就能看到全部逻辑
+Go 版:   用户只能看到 ELF 二进制
+```
+
+### 独立 go.mod
+
+`cert-sudo-check` 有独立的 `go.mod`，不依赖 ca-server 项目，单独编译部署：
+
+```bash
+go/cert-sudo-check/
+├── main.go
+└── go.mod  →  module cert-sudo-check
+```
+
+---
+
+## 六、在线状态守卫（路径A）
+
+目标服务器必须证明自己与 CA 保持连接，否则拒绝所有证书。
+
+### 实现方式
+
+cert-sync 每次成功拉取数据或 watch 心跳后，更新时间戳文件：
+
+```
+/opt/ca_server/data/last-sync-timestamp
+  └── 内容：Unix 时间戳
+  └── 更新者：cert-sync（每次成功同步后写入）
+  └── 权限：644
+```
+
+cert-sudo-check 每次被调用时先检查这个文件：
+
+```go
+func checkOnline() bool {
+    data, err := os.ReadFile("/opt/ca_server/data/last-sync-timestamp")
+    if err != nil { return false }
+
+    ts, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64)
+    if err != nil { return false }
+
+    return time.Now().Unix() - ts <= 30
+}
+```
+
+### 超时影响
+
+```
+last-sync-timestamp 距今 ≤ 30 秒 → 放行
+last-sync-timestamp 距今 > 30 秒 → 拒绝所有 SSH 登录和 sudo
+
+30 秒是最大失效延迟。
+  └── 无法被任何旧证书绕过
+  └── 即使攻击者持有有效旧证书
+```
+
+## 七、PAM 配置
+
+### 完整的 PAM 栈
+
+sshd 和 sudo 使用不同的 PAM 配置文件，共享同一个二进制：
+
+```bash
+# /etc/pam.d/sshd
+auth required pam_exec.so /usr/local/bin/cert-sudo-check --check-online
+# 只检查在线状态
+# 不查 SSH 证书权限（sshd 的 TrustedUserCAKeys 已做）
+
+# /etc/pam.d/sudo
+auth sufficient pam_exec.so /usr/local/bin/cert-sudo-check --check-sudo
+# 查在线状态 + SSH 证书 sudo 权限 + 组版本号
+auth sufficient pam_unix.so
+auth requisite  pam_deny.so
+```
+
+### Go 二进制处理参数
+
+```go
+func main() {
+    checkOnline := false
+    checkSudo := false
+    for _, arg := range os.Args[1:] {
+        switch arg {
+        case "--check-online":
+            checkOnline = true
+        case "--check-sudo":
+            checkOnline = true  // sudo 检查也包含在线检查
+            checkSudo = true
+        }
+    }
+    // ... 验证逻辑
+}
+```
+
+### 与 sudo-wrapper 的关系
+
+```
+sudo -n xxx
+  → wrapper 调 cert-sudo-check --check-sudo（SSH 用户身份）
+    ├── 在线状态检查（通过）
+    ├── sudo 权限检查（通过）
+    └── exit 0
+  → exec _sudo xxx（去 -n）
+    → PAM → cert-sudo-check --check-sudo（root 身份，二次确认）
+      ├── 读 /tmp/.cert-sudo-sock 获取 agent socket
+      ├── 在线状态检查（通过）
+      ├── sudo 权限检查（通过）
+      └── exit 0
+    → 免密放行
+
+sudo xxx
+  → wrapper 无 -n，直接转发 _sudo xxx
+    → PAM → cert-sudo-check --check-sudo
+      └── 同上验证流程
+    → 免密放行
+
+sshd 登录
+  → PAM → cert-sudo-check --check-online
+    └── 只查在线状态，不查 sudo
+```
+
+---
+
+## 八、证书扩展字段
 
 签发的 SSH 证书包含以下扩展：
 
@@ -261,7 +411,7 @@ CA 端 VerifyPeerCertificate → 检查证书 CN 前缀 "agent-<target>"
 
 ---
 
-## 六、cert-sudo-check v10 验证链
+## 九、cert-sudo-check v10 验证链
 
 ```
 1. 读取 SSH agent 中所有证书
@@ -281,7 +431,7 @@ CA 端 VerifyPeerCertificate → 检查证书 CN 前缀 "agent-<target>"
 
 ---
 
-## 七、同步通道
+## 十、同步通道
 
 目标服务器通过 HTTP Long-Polling Watch 与 CA 保持长连接。所有同步请求使用独立的 agent mTLS 证书双向加密：
 
@@ -312,24 +462,26 @@ CA 端 VerifyPeerCertificate → 检查证书 CN 前缀 "agent-<target>"
 
 ---
 
-## 八、组件清单
+## 十一、组件清单
 
 | 组件 | 语言 | 部署位置 | 功能 |
 |------|------|---------|------|
 | ca-server | Go（零外部依赖） | CA 服务器 | API 服务器 |
 | cert-operator | Go（零外部依赖） | 客户端 | CLI：获取证书、SSH、管理 |
-| cert-sudo-check v10 | Bash | 目标服务器 | PAM 模块：sudo 验证 |
+| cert-sudo-check v10 | Go | 目标服务器 | PAM 模块：在线检查 + sudo 验证 + 组版本验证 |
+| cert-sync | Go | 目标服务器 | CA 同步守护进程（long-polling watch）|
 | sudo-wrapper | Bash | 目标服务器 | sudo 拦截 |
-| cert-sync | Bash | 目标服务器 | CA 同步守护进程 |
 | cert-operator-plugin | Python | 客户端 | Hermes AI 插件 |
 | install.sh | Bash | CA 服务器 | 一键安装 |
 | deploy-sudo-wrapper.sh | Bash | 目标服务器 | 目标服务器部署 |
 
 ---
 
-## 九、版本
+## 十二、版本
 
 当前设计版本：**v4.0.0**（待实现）
+
+cert-sudo-check 实现：Bash → Go（ELF 二进制，源码不暴露）
 
 相比 v3.2.0 的变化：
 - 引入 root CA + 子 CA + 组 CA 三层证书体系
