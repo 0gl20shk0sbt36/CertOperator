@@ -105,6 +105,7 @@ func (s *Server) Serve() error {
 	mux.HandleFunc("/api/schedule/requests", s.handleScheduleRequests)
 	mux.HandleFunc("/api/schedule/replace", s.handleScheduleReplace)
 	mux.HandleFunc("/api/schedule/approved", s.handleScheduleApproved)
+	mux.HandleFunc("/api/get-scheduled-cert", s.handleGetScheduledCert)
 
 	host := cfg.Server.Host
 	if host == "" {
@@ -847,4 +848,221 @@ func (s *Server) handleScheduleApproved(w http.ResponseWriter, r *http.Request) 
 	default:
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]interface{}{"error": "method not allowed"})
 	}
+}
+
+// ---------------------------------------------------------------------------
+// get-scheduled-cert — time-window-locked SSH cert with caching
+// ---------------------------------------------------------------------------
+
+type scheduledCertCache struct {
+	PrivateKey string `json:"private_key"`
+	Cert       string `json:"cert"`
+	Serial     int    `json:"serial"`
+	ExpiresAt  string `json:"expires_at"`
+}
+
+func (s *Server) scheduledCertDir() string {
+	return filepath.Join(s.dataDir(), "scheduled-certs")
+}
+
+func (s *Server) handleGetScheduledCert(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]interface{}{"error": "method not allowed"})
+		return
+	}
+
+	clientName := clientCertCN(r)
+	if clientName == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]interface{}{"error": "mTLS client certificate required"})
+		return
+	}
+
+	cfg, err := config.Load(s.ConfigPath)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{"error": "load config"})
+		return
+	}
+
+	var body struct {
+		Group     string `json:"group"`
+		User      string `json:"user"`
+		StartTime string `json:"start_time"` // HH:MM
+		EndTime   string `json:"end_time"`   // HH:MM
+		Days      []int  `json:"days"`       // 0-6, empty=every day
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "invalid JSON"})
+		return
+	}
+
+	groupName := body.Group
+	if groupName == "" {
+		groupName = "default"
+	}
+	if body.StartTime == "" || body.EndTime == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "start_time and end_time are required"})
+		return
+	}
+
+	gcfg := cfg.ResolveGroup(groupName)
+	if gcfg == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"error": fmt.Sprintf("组不存在: %s", groupName)})
+		return
+	}
+	if gcfg.IsFrozen() {
+		writeJSON(w, http.StatusForbidden, map[string]interface{}{"error": fmt.Sprintf("组 %s 已被冻结", groupName)})
+		return
+	}
+
+	allowedUsers := gcfg.AllowedUsers
+	if body.User != "" {
+		allowedUsers = body.User
+	}
+
+	// Compute next occurrence absolute time window.
+	nextStart, nextEnd := nextOccurrence(body.Days, body.StartTime, body.EndTime)
+	validityStr := fmt.Sprintf("%s:%s", nextStart.Format("20060102150405"), nextEnd.Format("20060102150405"))
+
+	// Cache key: hash of client+group+start+end+days
+	cacheKey := sha256hex(clientName + groupName + body.StartTime + body.EndTime + fmt.Sprintf("%v", body.Days))
+	cacheDir := s.scheduledCertDir()
+	os.MkdirAll(cacheDir, 0700)
+	cachePath := filepath.Join(cacheDir, cacheKey+".json")
+
+	// Try cache first
+	if cached, cerr := loadScheduledCertCache(cachePath); cerr == nil && cached != nil {
+		if time.Now().UTC().Before(nextEnd) {
+			writeJSON(w, http.StatusOK, map[string]interface{}{
+				"success":        true,
+				"cached":         true,
+				"ssh_private_key": cached.PrivateKey,
+				"ssh_cert":       cached.Cert,
+				"serial":         cached.Serial,
+				"expires_at":     cached.ExpiresAt,
+				"valid_from":     nextStart.Format(time.RFC3339),
+				"valid_until":    nextEnd.Format(time.RFC3339),
+			})
+			return
+		}
+		// Cached cert expired → remove and re-issue
+		os.Remove(cachePath)
+	}
+
+	// Issue new cert with exact time window
+	dataDir := filepath.Dir(s.CAKeyPath)
+	serialFile := filepath.Join(dataDir, "serial.txt")
+	keyType := cfg.CA.KeyType
+	if keyType == "" {
+		keyType = "ed25519"
+	}
+	signer := cert.NewSigner(s.CAKeyPath, keyType, serialFile)
+
+	privKey, certPEM, serial, err := signer.SignWithValidity(allowedUsers, validityStr, gcfg.Extensions)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{"error": fmt.Sprintf("签发失败: %v", err)})
+		return
+	}
+
+	cache := scheduledCertCache{
+		PrivateKey: privKey,
+		Cert:       certPEM,
+		Serial:     serial,
+		ExpiresAt:  nextEnd.Format(time.RFC3339),
+	}
+	saveScheduledCertCache(cachePath, &cache)
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success":        true,
+		"cached":         false,
+		"ssh_private_key": privKey,
+		"ssh_cert":       certPEM,
+		"serial":         serial,
+		"expires_at":     cache.ExpiresAt,
+		"valid_from":     nextStart.Format(time.RFC3339),
+		"valid_until":    nextEnd.Format(time.RFC3339),
+	})
+}
+
+// ---- helpers ---------------------------------------------------------------
+
+func sha256hex(s string) string {
+	h := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(h[:])
+}
+
+func loadScheduledCertCache(path string) (*scheduledCertCache, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var c scheduledCertCache
+	if err := json.Unmarshal(data, &c); err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+func saveScheduledCertCache(path string, c *scheduledCertCache) error {
+	data, err := json.Marshal(c)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0600)
+}
+
+// nextOccurrence computes the next absolute [start, end] time window matching
+// the given days-of-week and HH:MM times.
+func nextOccurrence(days []int, startTime, endTime string) (time.Time, time.Time) {
+	now := time.Now().UTC()
+	today := now.Truncate(24 * time.Hour)
+
+	for offset := 0; offset <= 7; offset++ {
+		candidate := today.AddDate(0, 0, offset)
+		wd := int(candidate.Weekday())
+		// Check if day matches (empty days = every day)
+		if len(days) > 0 {
+			found := false
+			for _, d := range days {
+				if wd == d {
+					found = true
+					break
+				}
+			}
+			if !found {
+				continue
+			}
+		}
+
+		sH, sM := parseHHMM(startTime)
+		eH, eM := parseHHMM(endTime)
+		start := candidate.Add(time.Duration(sH)*time.Hour + time.Duration(sM)*time.Minute)
+		end := candidate.Add(time.Duration(eH)*time.Hour + time.Duration(eM)*time.Minute)
+
+		if offset == 0 && now.After(end) {
+			continue // today's window already passed
+		}
+		return start, end
+	}
+
+	// Fallback: tomorrow at start_time
+	sH, sM := parseHHMM(startTime)
+	eH, eM := parseHHMM(endTime)
+	tomorrow := today.AddDate(0, 0, 1)
+	return tomorrow.Add(time.Duration(sH)*time.Hour + time.Duration(sM)*time.Minute),
+		tomorrow.Add(time.Duration(eH)*time.Hour + time.Duration(eM)*time.Minute)
+}
+
+func parseHHMM(s string) (int, int) {
+	parts := strings.Split(s, ":")
+	if len(parts) != 2 {
+		return 0, 0
+	}
+	h := 0
+	m := 0
+	fmt.Sscanf(parts[0], "%d", &h)
+	fmt.Sscanf(parts[1], "%d", &m)
+	return h, m
 }

@@ -41,6 +41,8 @@ func main() {
 		cmdDeployClient(args)
 	case "schedule":
 		cmdScheduleClient(args)
+	case "get-scheduled-cert":
+		cmdGetScheduledCert(args)
 	case "health":
 		cmdHealth(args)
 	case "version":
@@ -70,6 +72,7 @@ Usage:
   cert-operator deploy [script]                            Deploy client certs (legacy)
   cert-operator deploy-client <package.tar.gz>             Deploy mTLS client cert package
   cert-operator schedule <action> [flags]                  Schedule mgmt (submit/show/replace)
+  cert-operator get-scheduled-cert [flags]                 Get time-window SSH cert
   cert-operator version                                    Show version
 
 Get-cert flags:
@@ -541,6 +544,66 @@ func parseFlags(args []string) map[string]string {
 		}
 	}
 	return flags
+}
+
+// ---- get-scheduled-cert --------------------------------------------------
+
+func cmdGetScheduledCert(args []string) {
+	flags := parseFlags(args)
+	server := flags["--server"]
+	if server == "" {
+		fmt.Fprintf(os.Stderr, "❌ --server is required\n")
+		os.Exit(1)
+	}
+	rulesJSON := flags["--rules"]
+	if rulesJSON == "" {
+		fmt.Fprintf(os.Stderr, "❌ --rules is required\n")
+		fmt.Fprintf(os.Stderr, "   Example: --rules '{\"group\":\"admin\",\"start_time\":\"07:00\",\"end_time\":\"08:00\",\"days\":[1,3,5]}'\n")
+		os.Exit(1)
+	}
+
+	client := makeClient(server, flags)
+
+	resp, err := client.Post(strings.TrimRight(server, "/")+"/api/get-scheduled-cert",
+		"application/json", strings.NewReader(rulesJSON))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "❌ %v\n", err)
+		os.Exit(1)
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(resp.Body)
+
+	var result map[string]interface{}
+	json.Unmarshal(data, &result)
+
+	if !isTrue(result["success"]) {
+		errMsg, _ := result["error"].(string)
+		fmt.Fprintf(os.Stderr, "❌ %s\n", errMsg)
+		os.Exit(1)
+	}
+
+	// Save to cert dir
+	certName := flags["--name"]
+	if certName == "" {
+		certName = "scheduled"
+	}
+	certDir := flags["--cert-dir"]
+	if certDir == "" {
+		certDir = hermesDir()
+	}
+	os.MkdirAll(certDir, 0700)
+	keyPath := filepath.Join(certDir, certName)
+	certPath := filepath.Join(certDir, certName+"-cert.pub")
+	os.WriteFile(keyPath, []byte(result["ssh_private_key"].(string)), 0600)
+	os.WriteFile(certPath, []byte(result["ssh_cert"].(string)), 0644)
+
+	fmt.Printf("✅ 证书已获取\n")
+	fmt.Printf("   私钥: %s\n", keyPath)
+	fmt.Printf("   证书: %s\n", certPath)
+	if s, ok := result["serial"]; ok { fmt.Printf("   序列号: %v\n", s) }
+	if v, ok := result["valid_from"]; ok { fmt.Printf("   生效:   %v\n", v) }
+	if v, ok := result["valid_until"]; ok { fmt.Printf("   过期:   %v\n", v) }
+	if c, ok := result["cached"]; ok && isTrue(c) { fmt.Println("   (从缓存返回)") }
 }
 
 func isTrue(v interface{}) bool {

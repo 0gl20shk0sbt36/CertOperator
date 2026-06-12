@@ -32,6 +32,65 @@ func NewSigner(caKey, keyType, serialFile string) *Signer {
 	}
 }
 
+// SignWithValidity signs a key pair using a custom -V validity string (e.g.
+// "+60m" or "20260612070000:20260612080000").  Returns private key, cert, serial.
+func (s *Signer) SignWithValidity(allowedUsers string, validityStr string, extensions map[string]string) (
+	privateKeyPEM string,
+	certPEM string,
+	serial int,
+	err error,
+) {
+	dataDir := filepath.Dir(s.CAKey)
+
+	serial, err = s.nextSerial()
+	if err != nil {
+		return "", "", 0, fmt.Errorf("serial: %w", err)
+	}
+
+	tmpKey := filepath.Join(dataDir, fmt.Sprintf(".tmp_%d", serial))
+	run("ssh-keygen", "-t", s.KeyType, "-f", tmpKey, "-N", "", "-C", fmt.Sprintf("ca-server-user-%d", serial))
+	tmpPub := tmpKey + ".pub"
+	certPath := tmpKey + "-cert.pub"
+
+	defer func() {
+		for _, p := range []string{tmpKey, tmpPub, certPath} {
+			os.Remove(p)
+		}
+	}()
+
+	identity := fmt.Sprintf("cert-%d", serial)
+	args := []string{"-s", s.CAKey, "-I", identity, "-n", allowedUsers, "-V", validityStr, "-z", strconv.Itoa(serial)}
+
+	if extensions != nil {
+		for k, v := range extensions {
+			opt := k
+			val := strings.ToLower(strings.TrimSpace(v))
+			if !strings.Contains(opt, ":") && !isBuiltinOption(opt) {
+				opt = fmt.Sprintf("extension:%s@cert-operator", opt)
+			}
+			if val != "" && val != "true" && val != "yes" && val != "1" {
+				args = append(args, "-O", fmt.Sprintf("%s=%s", opt, v))
+			} else {
+				args = append(args, "-O", opt)
+			}
+		}
+	}
+
+	args = append(args, tmpPub)
+	run("ssh-keygen", args...)
+
+	privData, err := os.ReadFile(tmpKey)
+	if err != nil {
+		return "", "", 0, fmt.Errorf("read temp key: %w", err)
+	}
+	certData, err := os.ReadFile(certPath)
+	if err != nil {
+		return "", "", 0, fmt.Errorf("read cert: %w", err)
+	}
+
+	return string(privData), string(certData), serial, nil
+}
+
 // Sign generates a temporary key pair, signs it with the CA key via
 // ssh-keygen -s, and returns the private key PEM, certificate PEM, serial
 // number, and expiry timestamp.  Temporary files are cleaned up before
