@@ -103,10 +103,16 @@ func saveApproved(dataDir string, m map[string]*ClientSchedules) error {
 	return os.WriteFile(approvedPath(dataDir), append(data, '\n'), 0644)
 }
 
+const MaxPendingRulesPerClient = 10
+
+// requestKey returns the map key for a client+rule pair.
+func requestKey(clientName, ruleName string) string { return clientName + ":" + ruleName }
+
 // ---- operations ------------------------------------------------------------
 
-// SubmitRequest creates or replaces a pending request for a client.  Only one
-// pending request per client is allowed; submitting a new one replaces the old.
+// SubmitRequest creates a pending request.  Each client can have multiple
+// requests (different rule names).  The max number of pending rules per
+// client is capped by MaxPendingRulesPerClient.
 func SubmitRequest(dataDir string, clientName, grantedTo string, rules []Rule) error {
 	mu.Lock()
 	defer mu.Unlock()
@@ -114,6 +120,31 @@ func SubmitRequest(dataDir string, clientName, grantedTo string, rules []Rule) e
 	reqs, err := loadRequests(dataDir)
 	if err != nil {
 		return err
+	}
+
+	// Validate rule names are unique for this client.
+	for _, rule := range rules {
+		key := requestKey(clientName, rule.Name)
+		if existing, ok := reqs[key]; ok && existing.Status == "pending" {
+			return fmt.Errorf("已有待审批的同名规则 %q，请先等待审批或删除", rule.Name)
+		}
+	}
+
+	// Count pending rules for this client.
+	pendingCount := 0
+	for k, r := range reqs {
+		cn, _ := splitKey(k)
+		if cn == clientName && r.Status == "pending" {
+			for range r.Rules {
+				pendingCount++
+			}
+		}
+	}
+	for range rules {
+		if pendingCount >= MaxPendingRulesPerClient {
+			return fmt.Errorf("待审批规则数已达上限（%d），请等待审批后再提交", MaxPendingRulesPerClient)
+		}
+		pendingCount++
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -126,13 +157,14 @@ func SubmitRequest(dataDir string, clientName, grantedTo string, rules []Rule) e
 		UpdatedAt:  now,
 	}
 
-	// Each client can only have one request.  Replace the previous one.
-	reqs[clientName] = req
+	// Key = first rule's name (assumes at least one rule, validated by caller).
+	key := requestKey(clientName, rules[0].Name)
+	reqs[key] = req
 	return saveRequests(dataDir, reqs)
 }
 
-// GetRequest returns a client's current request (pending / approved / rejected).
-func GetRequest(dataDir, clientName string) (*Request, error) {
+// GetRequest returns all requests for a client.
+func GetAllRequests(dataDir, clientName string) ([]*Request, error) {
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -140,14 +172,34 @@ func GetRequest(dataDir, clientName string) (*Request, error) {
 	if err != nil {
 		return nil, err
 	}
-	r, ok := reqs[clientName]
+	var out []*Request
+	for k, r := range reqs {
+		cn, _ := splitKey(k)
+		if cn == clientName {
+			out = append(out, r)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt < out[j].CreatedAt })
+	return out, nil
+}
+
+// GetRequestByRule returns a specific request by client+rule name.
+func GetRequestByRule(dataDir, clientName, ruleName string) (*Request, error) {
+	mu.Lock()
+	defer mu.Unlock()
+
+	reqs, err := loadRequests(dataDir)
+	if err != nil {
+		return nil, err
+	}
+	r, ok := reqs[requestKey(clientName, ruleName)]
 	if !ok {
 		return nil, nil
 	}
 	return r, nil
 }
 
-// ListRequests returns all requests, sorted by client name.
+// ListRequests returns all requests, sorted by key.
 func ListRequests(dataDir string) ([]*Request, error) {
 	mu.Lock()
 	defer mu.Unlock()
@@ -156,73 +208,98 @@ func ListRequests(dataDir string) ([]*Request, error) {
 	if err != nil {
 		return nil, err
 	}
-	names := make([]string, 0, len(reqs))
-	for n := range reqs {
-		names = append(names, n)
+	keys := make([]string, 0, len(reqs))
+	for k := range reqs {
+		keys = append(keys, k)
 	}
-	sort.Strings(names)
-	out := make([]*Request, 0, len(names))
-	for _, n := range names {
-		out = append(out, reqs[n])
+	sort.Strings(keys)
+	out := make([]*Request, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, reqs[k])
 	}
 	return out, nil
 }
 
 // ApproveRequest moves a pending request to approved state and copies its
-// rules into the approved-schedules file (overwriting any prior rules for
-// that client).
-func ApproveRequest(dataDir, clientName string) error {
+// rules into the approved-schedules file.
+func ApproveRequest(dataDir, clientName, ruleName string) error {
 	mu.Lock()
 	defer mu.Unlock()
 
+	key := requestKey(clientName, ruleName)
 	reqs, err := loadRequests(dataDir)
 	if err != nil {
 		return err
 	}
-	r, ok := reqs[clientName]
+	r, ok := reqs[key]
 	if !ok {
-		return fmt.Errorf("no request for client %q", clientName)
+		return fmt.Errorf("no request for client %q, rule %q", clientName, ruleName)
 	}
 	if r.Status != "pending" {
-		return fmt.Errorf("request for %q is not pending (status=%s)", clientName, r.Status)
+		return fmt.Errorf("request is not pending (status=%s)", r.Status)
 	}
 
 	r.Status = "approved"
 	r.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-	reqs[clientName] = r
+	reqs[key] = r
 	if err := saveRequests(dataDir, reqs); err != nil {
 		return err
 	}
 
-	// Copy rules into approved-schedules
+	// Merge rules into approved-schedules.
 	app, err := loadApproved(dataDir)
 	if err != nil {
 		return err
 	}
-	app[clientName] = &ClientSchedules{
-		ClientName: clientName,
-		Rules:      r.Rules,
+	cs, ok := app[clientName]
+	if !ok {
+		cs = &ClientSchedules{ClientName: clientName}
+		app[clientName] = cs
+	}
+	// Replace existing rules with same name, append new ones.
+	for _, newRule := range r.Rules {
+		replaced := false
+		for i, existing := range cs.Rules {
+			if existing.Name == newRule.Name {
+				cs.Rules[i] = newRule
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			cs.Rules = append(cs.Rules, newRule)
+		}
 	}
 	return saveApproved(dataDir, app)
 }
 
 // RejectRequest marks a pending request as rejected.
-func RejectRequest(dataDir, clientName string) error {
+func RejectRequest(dataDir, clientName, ruleName string) error {
 	mu.Lock()
 	defer mu.Unlock()
 
+	key := requestKey(clientName, ruleName)
 	reqs, err := loadRequests(dataDir)
 	if err != nil {
 		return err
 	}
-	r, ok := reqs[clientName]
+	r, ok := reqs[key]
 	if !ok {
-		return fmt.Errorf("no request for client %q", clientName)
+		return fmt.Errorf("no request for client %q, rule %q", clientName, ruleName)
 	}
 	r.Status = "rejected"
 	r.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-	reqs[clientName] = r
+	reqs[key] = r
 	return saveRequests(dataDir, reqs)
+}
+
+// splitKey splits "clientName:ruleName" into two parts.
+func splitKey(k string) (string, string) {
+	parts := strings.SplitN(k, ":", 2)
+	if len(parts) < 2 {
+		return parts[0], ""
+	}
+	return parts[0], parts[1]
 }
 
 // ---- rule matching ---------------------------------------------------------

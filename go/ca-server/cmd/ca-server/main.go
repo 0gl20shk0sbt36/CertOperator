@@ -926,62 +926,65 @@ func cmdSchedule(args []string) {
 					}
 					days = "周" + strings.Join(ds, ",")
 				}
-				fmt.Printf("   ├ %s %s-%s ×%d 组:%s\n", days, rule.StartTime, rule.EndTime, rule.MaxCount, rule.Group)
+				fmt.Printf("   ├ %s: %s %s-%s ×%d 组:%s\n", rule.Name, days, rule.StartTime, rule.EndTime, rule.MaxCount, rule.Group)
 			}
 			fmt.Println()
 		}
 
 	case "approve":
-		if len(rest) < 1 {
-			fmt.Fprintf(os.Stderr, "❌ Usage: ca-server schedule approve <client-name>\n")
+		if len(rest) < 2 {
+			fmt.Fprintf(os.Stderr, "❌ Usage: ca-server schedule approve <client-name> <rule-name>\n")
 			os.Exit(1)
 		}
-		if err := schedule.ApproveRequest(dataDir, rest[0]); err != nil {
+		if err := schedule.ApproveRequest(dataDir, rest[0], rest[1]); err != nil {
 			fmt.Fprintf(os.Stderr, "❌ %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Printf("✅ 已批准 %s 的定期免密申请\n", rest[0])
+		fmt.Printf("✅ 已批准 %s 的规则 %s\n", rest[0], rest[1])
 
 	case "reject":
-		if len(rest) < 1 {
-			fmt.Fprintf(os.Stderr, "❌ Usage: ca-server schedule reject <client-name>\n")
+		if len(rest) < 2 {
+			fmt.Fprintf(os.Stderr, "❌ Usage: ca-server schedule reject <client-name> <rule-name>\n")
 			os.Exit(1)
 		}
-		if err := schedule.RejectRequest(dataDir, rest[0]); err != nil {
+		if err := schedule.RejectRequest(dataDir, rest[0], rest[1]); err != nil {
 			fmt.Fprintf(os.Stderr, "❌ %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Printf("❌ 已拒绝 %s 的申请\n", rest[0])
+		fmt.Printf("❌ 已拒绝 %s 的规则 %s\n", rest[0], rest[1])
 
 	case "show":
 		if len(rest) < 1 {
 			fmt.Fprintf(os.Stderr, "❌ Usage: ca-server schedule show <client-name>\n")
 			os.Exit(1)
 		}
-		req, err := schedule.GetRequest(dataDir, rest[0])
+		reqs, err := schedule.GetAllRequests(dataDir, rest[0])
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "❌ %v\n", err)
 			os.Exit(1)
 		}
-		if req == nil {
+		if len(reqs) == 0 {
 			fmt.Println("(无申请记录)")
 			return
 		}
-		fmt.Printf("📋 客户端: %s\n", req.ClientName)
-		fmt.Printf("   授予者: %s\n", req.GrantedTo)
-		fmt.Printf("   状态:   %s\n", req.Status)
-		fmt.Printf("   创建:   %s\n", req.CreatedAt)
-		for i, rule := range req.Rules {
-			days := "每天"
-			if len(rule.Days) > 0 {
-				dayNames := []string{"日","一","二","三","四","五","六"}
-				var ds []string
-				for _, d := range rule.Days {
-					ds = append(ds, dayNames[d])
+		for _, req := range reqs {
+			fmt.Printf("📋 客户端: %s\n", req.ClientName)
+			fmt.Printf("   授予者: %s\n", req.GrantedTo)
+			fmt.Printf("   状态:   %s\n", req.Status)
+			fmt.Printf("   创建:   %s\n", req.CreatedAt)
+			for _, rule := range req.Rules {
+				days := "每天"
+				if len(rule.Days) > 0 {
+					dayNames := []string{"日","一","二","三","四","五","六"}
+					var ds []string
+					for _, d := range rule.Days {
+						ds = append(ds, dayNames[d])
+					}
+					days = "周" + strings.Join(ds, ",")
 				}
-				days = "周" + strings.Join(ds, ",")
+				fmt.Printf("   📎 %s: %s %s-%s ×%d 组:%s\n", rule.Name, days, rule.StartTime, rule.EndTime, rule.MaxCount, rule.Group)
 			}
-			fmt.Printf("   规则%d: %s %s-%s ×%d 组:%s\n", i+1, days, rule.StartTime, rule.EndTime, rule.MaxCount, rule.Group)
+			fmt.Println()
 		}
 
 	case "list-approved":
@@ -1011,7 +1014,7 @@ func cmdSchedule(args []string) {
 					}
 					days = "周" + strings.Join(ds, ",")
 				}
-				fmt.Printf("   ├ %s %s-%s ×%d 组:%s\n", days, rule.StartTime, rule.EndTime, rule.MaxCount, rule.Group)
+				fmt.Printf("   ├ %s: %s %s-%s ×%d 组:%s\n", rule.Name, days, rule.StartTime, rule.EndTime, rule.MaxCount, rule.Group)
 			}
 			fmt.Println()
 		}
@@ -1037,13 +1040,16 @@ func printScheduleHelp() {
 	fmt.Fprintf(os.Stderr, `Schedule management:
 
 Usage:
-  ca-server schedule list                     List all requests
-  ca-server schedule approve <client-name>    Approve a pending request
-  ca-server schedule reject <client-name>     Reject a request
-  ca-server schedule show <client-name>       Show request details
-  ca-server schedule list-approved            List all active approved rules
-  ca-server schedule revoke-approved <name>   Revoke a client's approved rules
-`)
+  ca-server schedule list                               List all requests
+  ca-server schedule approve <client> <rule-name>       Approve a specific rule
+  ca-server schedule reject <client> <rule-name>        Reject a specific rule
+  ca-server schedule show <client-name>                 Show all requests for a client
+  ca-server schedule list-approved                      List all active approved rules
+  ca-server schedule revoke-approved <name>             Revoke a client's approved rules
+
+Note: each rule has a unique name. A client can have multiple rules.
+      Max pending rules per client: %d
+`, schedule.MaxPendingRulesPerClient)
 }
 
 // ---------------------------------------------------------------------------

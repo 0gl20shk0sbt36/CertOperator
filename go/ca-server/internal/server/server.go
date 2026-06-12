@@ -748,17 +748,17 @@ func (s *Server) handleScheduleRequests(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Clients can only see their own request.
-	req, err := schedule.GetRequest(s.dataDir(), clientName)
+	// Clients can see all their own requests.
+	reqs, err := schedule.GetAllRequests(s.dataDir(), clientName)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{"error": err.Error()})
 		return
 	}
-	if req == nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"request": nil, "message": "无申请记录"})
+	if len(reqs) == 0 {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"requests": nil, "message": "无申请记录"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"request": req})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"requests": reqs})
 }
 
 // handleScheduleReplace - PUT replaces the client's existing request.
@@ -798,8 +798,8 @@ func (s *Server) handleScheduleReplace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if there's an existing request that is not approved yet
-	existing, err := schedule.GetRequest(s.dataDir(), clientName)
+	// Check if there's an existing pending request with the same rule name.
+	existing, err := schedule.GetRequestByRule(s.dataDir(), clientName, body.Rules[0].Name)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{"error": err.Error()})
 		return
