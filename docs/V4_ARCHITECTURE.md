@@ -240,6 +240,7 @@ CA 端 VerifyPeerCertificate → 检查证书 CN 前缀 "agent-<target>"
 | `/api/v1/targets` | GET | ✅ | 列出可用的 target |
 | `/api/v1/targets/<name>/sync` | GET | agent mTLS | 目标服务器拉取数据 |
 | `/api/v1/targets/<name>/watch` | GET | agent mTLS | 长连接变更通知 |
+| `/api/v1/targets/<name>/rules` | GET/PUT | agent mTLS | 目标服务器读写自己的规则 |
 | `/api/v1/schedule/request` | POST | ✅ | 提交定期免密申请 |
 | `/api/v1/schedule/requests` | GET | ✅ | 查看申请 |
 | `/api/v1/schedule/replace` | PUT | ✅ | 覆盖申请 |
@@ -305,17 +306,36 @@ cert-sync 每次成功拉取数据或 watch 心跳后，更新时间戳文件：
   └── 权限：644
 ```
 
-cert-sudo-check 每次被调用时先检查这个文件：
+### 超时阈值可配置
+
+阈值写在目标服务器的 `config.json` 中，cert-sudo-check 启动时读取：
+
+```json
+// /opt/ca_server/config.json
+{
+  "online_timeout_seconds": 30,
+  "ca_servers": [
+    {"url": "https://ca-primary:8443", "priority": 1, "root_cert": "/etc/ssh/trusted-roots/ca-primary.pem"},
+    {"url": "https://ca-backup:8443",  "priority": 2, "root_cert": "/etc/ssh/trusted-roots/ca-backup.pem"}
+  ]
+}
+```
+
+cert-sudo-check 读取：
 
 ```go
-func checkOnline() bool {
-    data, err := os.ReadFile("/opt/ca_server/data/last-sync-timestamp")
-    if err != nil { return false }
+type TargetConfig struct {
+    OnlineTimeoutSeconds int `json:"online_timeout_seconds"`
+}
 
-    ts, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64)
-    if err != nil { return false }
-
-    return time.Now().Unix() - ts <= 30
+func loadTimeout(path string) int {
+    data, _ := os.ReadFile(path)
+    var cfg TargetConfig
+    json.Unmarshal(data, &cfg)
+    if cfg.OnlineTimeoutSeconds <= 0 {
+        return 30  // 默认
+    }
+    return cfg.OnlineTimeoutSeconds
 }
 ```
 
@@ -367,6 +387,53 @@ func main() {
     // ... 验证逻辑
 }
 ```
+
+### 规则的可访问性
+
+| 角色 | 读规则 | 写规则 |
+|------|--------|--------|
+| CA 服务器管理员 | `ca-server targets rules show` | `ca-server targets rules set` |
+| 目标服务器（本机） | 同步通道拉取时包含规则副本 | 通过同步通道的规则写入 API（仅限自己的 target） |
+| 客户端用户 | `cert-operator info --target --group` | 不可写，不可申请 |
+
+### 目标服务器修改自己配置
+
+目标服务器通过 agent mTLS 连接 CA，通过专有 API 修改自己的规则：
+
+```
+目标服务器 cert-sync:
+  PUT /api/v1/targets/<name>/rules
+    ├── 身份认证：agent mTLS（CN = agent-<target>）
+    ├── CA 端只接受与 CN 匹配的 target
+    └── 目标服务器无法修改其他 target 的规则
+
+  CA 端验证：
+    └── agent 证书 CN 的 target 名 == URL 中的 target 名
+    └── 不匹配 → 403 Forbidden
+```
+
+API 实现：
+
+```go
+// CA 服务器端
+func (s *Server) handleTargetRulesUpdate(w http.ResponseWriter, r *http.Request) {
+    target := extractTarget(r.URL.Path)
+    agentCN := clientCertCN(r)  // 从 mTLS 提取 CN
+    
+    if agentCN != "agent-"+target {
+        writeJSON(w, http.StatusForbidden, map[string]interface{}{
+            "error": "agent CN 不匹配目标 target",
+        })
+        return
+    }
+    // 验证规则格式 ...
+    // 写入 targets/<name>/rules.json
+    // 递增组版本号
+    // 重新编译执行层
+}
+```
+
+---
 
 ### 与 sudo-wrapper 的关系
 
